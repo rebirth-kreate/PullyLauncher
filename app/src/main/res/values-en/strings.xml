@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">PullyLuncher</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_close">Back</string>
+    <string name="settings_open">Settings</string>
+    <string name="section_appearance">Appearance</string>
+    <string name="section_behavior">Behavior</string>
+    <string name="setting_button_radius">Main button size</string>
+    <string name="setting_node_radius">App icon size</string>
+    <string name="setting_spacing">App spacing</string>
+    <string name="setting_base_offset">First app position</string>
+    <string name="setting_lock_distance">Pull start distance</string>
+    <string name="setting_cancel_ratio">Cancel sensitivity</string>
+    <string name="setting_edge_darkness">Edge darkness</string>
+    <string name="setting_background_glow">Background brightness</string>
+    <string name="setting_node_count">Visible app count</string>
+    <string name="hint_button_radius">Adjust the size of the center button</string>
+    <string name="hint_node_radius">Adjust the size of the app icons</string>
+    <string name="hint_spacing">Adjust the spacing between app icons</string>
+    <string name="hint_base_offset">Distance from the center to the first app</string>
+    <string name="hint_lock_distance">How far to pull before direction locks</string>
+    <string name="hint_cancel_ratio">How easily the gesture cancels when drifting off-axis</string>
+    <string name="hint_edge_darkness">Adjust the darkness around the screen edges</string>
+    <string name="hint_background_glow">Adjust the glow around the center background</string>
+    <string name="hint_node_count">Number of visible app nodes</string>
+</resources>

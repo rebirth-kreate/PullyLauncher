@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">PullyLuncher</string>
+    <string name="settings_title">設定</string>
+    <string name="settings_close">戻る</string>
+    <string name="settings_open">設定</string>
+    <string name="section_appearance">見た目</string>
+    <string name="section_behavior">挙動</string>
+    <string name="setting_button_radius">メインボタンサイズ</string>
+    <string name="setting_node_radius">アプリアイコンサイズ</string>
+    <string name="setting_spacing">アプリ間隔</string>
+    <string name="setting_base_offset">最初のアプリ位置</string>
+    <string name="setting_lock_distance">引っ張り開始距離</string>
+    <string name="setting_cancel_ratio">キャンセルしやすさ</string>
+    <string name="setting_edge_darkness">エッジの濃さ</string>
+    <string name="setting_background_glow">背景の明るさ</string>
+    <string name="setting_node_count">表示アプリ数</string>
+    <string name="hint_button_radius">中央ボタンの大きさを調整します</string>
+    <string name="hint_node_radius">並ぶアプリアイコンの大きさを調整します</string>
+    <string name="hint_spacing">アプリアイコン同士の間隔を調整します</string>
+    <string name="hint_base_offset">中央から最初のアプリまでの距離です</string>
+    <string name="hint_lock_distance">どれだけ引っ張ると方向が固定されるかです</string>
+    <string name="hint_cancel_ratio">線からどれくらいずれるとキャンセルになるかです</string>
+    <string name="hint_edge_darkness">画面端の暗さを調整します</string>
+    <string name="hint_background_glow">中央背景の光り方を調整します</string>
+    <string name="hint_node_count">表示するアプリ数です</string>
+</resources>
