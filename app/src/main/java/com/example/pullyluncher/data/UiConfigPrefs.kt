@@ -4,22 +4,23 @@ import android.content.Context
 import com.example.pullyluncher.model.LauncherUiConfig
 
 /**
- * nodeCount と colorPreset を SharedPreferences に永続化する。
- *
- * その他の設定値（ボタン半径、スペーシング等）はデフォルト値のままで問題ないため
- * 現時点では保存対象外とする。必要に応じて KEY_* 定数を追加して拡張できる。
+ * LauncherUiConfig をまるごと SharedPreferences に永続化する。
  */
 object UiConfigPrefs {
 
     private const val PREFS_NAME       = "ui_config"
     private const val KEY_NODE_COUNT   = "node_count"
     private const val KEY_COLOR_PRESET = "color_preset"
+    private const val KEY_BALL_ALPHA   = "ball_alpha"
+    private const val KEY_HIDDEN_PKGS  = "hidden_packages"
 
     fun save(context: Context, config: LauncherUiConfig) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_NODE_COUNT,   config.nodeCount)
             .putInt(KEY_COLOR_PRESET, config.colorPreset)
+            .putFloat(KEY_BALL_ALPHA, config.ballAlpha)
+            .putString(KEY_HIDDEN_PKGS, config.hiddenPackages.joinToString(","))
             .apply()
     }
 
@@ -27,9 +28,14 @@ object UiConfigPrefs {
     fun load(context: Context): LauncherUiConfig {
         val prefs   = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val default = LauncherUiConfig()
+        val hiddenStr  = prefs.getString(KEY_HIDDEN_PKGS, "") ?: ""
+        val hiddenPkgs = if (hiddenStr.isBlank()) emptyList()
+                         else hiddenStr.split(",").filter { it.isNotBlank() }
         return default.copy(
-            nodeCount   = prefs.getInt(KEY_NODE_COUNT,   default.nodeCount),
-            colorPreset = prefs.getInt(KEY_COLOR_PRESET, 0)
+            nodeCount      = prefs.getInt(KEY_NODE_COUNT,   default.nodeCount),
+            colorPreset    = prefs.getInt(KEY_COLOR_PRESET, 0),
+            ballAlpha      = prefs.getFloat(KEY_BALL_ALPHA, default.ballAlpha),
+            hiddenPackages = hiddenPkgs
         )
     }
 }

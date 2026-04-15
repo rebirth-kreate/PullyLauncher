@@ -313,17 +313,17 @@ fun PullLauncherScreen(
                         center = glowCenter
                     )
                 } else {
-                    drawCircle(color = ColorButtonFill, radius = config.buttonRadiusPx, center = center)
+                    drawCircle(color = ColorButtonFill.copy(alpha = config.ballAlpha), radius = config.buttonRadiusPx, center = center)
                     drawCircle(
-                        color = ColorButtonHighlight.copy(alpha = 0.22f),
+                        color = ColorButtonHighlight.copy(alpha = 0.22f * config.ballAlpha),
                         radius = config.buttonRadiusPx - 18f,
                         center = center
                     )
                 }
             } else {
-                drawCircle(color = ColorButtonFill, radius = config.buttonRadiusPx, center = center)
+                drawCircle(color = ColorButtonFill.copy(alpha = config.ballAlpha), radius = config.buttonRadiusPx, center = center)
                 drawCircle(
-                    color = ColorButtonHighlight.copy(alpha = 0.22f),
+                    color = ColorButtonHighlight.copy(alpha = 0.22f * config.ballAlpha),
                     radius = config.buttonRadiusPx - 18f,
                     center = center
                 )

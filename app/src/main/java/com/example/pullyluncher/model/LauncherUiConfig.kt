@@ -22,5 +22,9 @@ data class LauncherUiConfig(
     val nodeRevealBackOffsetPx: Float = 46f,
     val nodeRevealWindowRatio: Float = 0.60f,
     /** カラープリセットインデックス（0〜ColorPresets.all.lastIndex）*/
-    val colorPreset: Int = 0
+    val colorPreset: Int = 0,
+    /** メインボールの不透明度（0.3〜1.0）*/
+    val ballAlpha: Float = 1.0f,
+    /** フローティングボールを非表示にするアプリの packageName リスト */
+    val hiddenPackages: List<String> = emptyList()
 )

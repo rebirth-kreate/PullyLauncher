@@ -13,6 +13,9 @@ import com.example.pullyluncher.model.PinnedApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -26,28 +29,41 @@ import kotlinx.coroutines.launch
  */
 object LauncherRepository {
 
-    // ── config（setter でコールバック発火）──────────────────────────
+    // ── config（StateFlow で即時通知）───────────────────────────────
 
-    @Volatile private var _config: LauncherUiConfig = LauncherUiConfig()
+    private val _configFlow = MutableStateFlow(LauncherUiConfig())
+
+    /** config 変更を複数コレクターへ即時配信する StateFlow */
+    val configFlow: StateFlow<LauncherUiConfig> = _configFlow.asStateFlow()
 
     var config: LauncherUiConfig
-        get() = _config
-        set(value) {
-            _config = value
-            onConfigChanged?.invoke()
-        }
+        get() = _configFlow.value
+        set(value) { _configFlow.value = value }
 
     /**
-     * config が変更されたときに呼ばれるコールバック。
-     * OverlayService が待機中の BallView 再描画に使用する。
+     * フォアグラウンドアプリが切り替わったときに呼ばれるコールバック。
+     * ForegroundAppService が発火し、OverlayService がボール可視判定に使用する。
      * Service.onDestroy で null にリセットすること。
      */
-    @Volatile var onConfigChanged: (() -> Unit)? = null
+    @Volatile var onForegroundChanged: (() -> Unit)? = null
+
+    /**
+     * loadAll() でアイコンのロードが完了したときに呼ばれるコールバック。
+     * OverlayService が展開ビューの再描画トリガーに使用する。
+     */
+    @Volatile var onIconsLoaded: (() -> Unit)? = null
 
     // ── アプリデータ ─────────────────────────────────────────────────
 
     @Volatile var allApps: List<AppEntry> = emptyList()
         private set
+
+    /**
+     * 直前にフォアグラウンドにあったアプリの packageName。
+     * refreshHistory / refreshHistoryAsync の呼び出し時に更新される。
+     * computeSlots でスロットから除外するために使う。
+     */
+    @Volatile var currentForegroundPackage: String? = null
 
     @Volatile var pinnedApps: List<AppEntry> = emptyList()
         private set
@@ -69,9 +85,12 @@ object LauncherRepository {
         get() = computeSlots(config.nodeCount)
 
     fun computeSlots(nodeCount: Int): List<AppSlot> {
-        val pinnedPkgs = pinnedApps.map { it.packageName }.toSet()
-        val histFill   = allApps.filter { it.packageName !in pinnedPkgs }
-        return (pinnedApps + histFill)
+        // 現在のフォアグラウンドアプリと自アプリをスロットから除外する
+        val excludePkgs   = setOfNotNull(currentForegroundPackage, "com.example.pullyluncher")
+        val pinnedPkgs    = pinnedApps.map { it.packageName }.toSet()
+        val filteredPinned = pinnedApps.filter { it.packageName !in excludePkgs }
+        val histFill      = allApps.filter { it.packageName !in pinnedPkgs && it.packageName !in excludePkgs }
+        return (filteredPinned + histFill)
             .take(nodeCount)
             .mapIndexed { idx, app -> AppSlot(index = idx, pinnedApp = app) }
     }
@@ -91,6 +110,7 @@ object LauncherRepository {
         if (allApps.isNotEmpty()) {
             allApps = UsageHistoryRepository.reorderByUsage(context, allApps)
         }
+        currentForegroundPackage = UsageHistoryRepository.getForegroundPackage(context)
     }
 
     /** refreshHistory の非 suspend ラッパー（Service など非コルーチンコンテキスト用）。 */
@@ -116,6 +136,8 @@ object LauncherRepository {
 
         // 全アプリのアイコンをロード（初回：生成＆保存、2回目以降：ディスクから高速読み込み）
         allApps.forEach { loadIconIfNeeded(context, it) }
+        // アイコンロード完了を通知（展開ビューの再描画トリガー）
+        onIconsLoaded?.invoke()
     }
 
     // ── 固定アプリ更新 ──────────────────────────────────────────────

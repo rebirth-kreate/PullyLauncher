@@ -56,6 +56,23 @@ object UsageHistoryRepository {
         } catch (_: Exception) { apps }
     }
 
+    /**
+     * 現在フォアグラウンドにあるアプリの packageName を返す。
+     * 権限がなければ null を返す。IO スレッドで呼ぶこと。
+     */
+    fun getForegroundPackage(context: Context): String? {
+        if (!hasPermission(context)) return null
+        return try {
+            val usm   = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+            val now   = System.currentTimeMillis()
+            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 10_000L, now)
+                ?: return null
+            stats.filter { it.lastTimeUsed > 0L }
+                 .maxByOrNull { it.lastTimeUsed }
+                 ?.packageName
+        } catch (_: Exception) { null }
+    }
+
     /** PACKAGE_USAGE_STATS 権限が付与されているか確認する。 */
     fun hasPermission(context: Context): Boolean = try {
         val ops  = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager

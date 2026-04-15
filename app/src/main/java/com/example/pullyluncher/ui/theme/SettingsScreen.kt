@@ -2,6 +2,7 @@ package com.example.pullyluncher.ui.theme
 
 import android.content.Intent
 import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.pullyluncher.ForegroundAppService
 import com.example.pullyluncher.LauncherRepository
 import com.example.pullyluncher.R
 import com.example.pullyluncher.data.UsageHistoryRepository
@@ -57,9 +59,10 @@ fun SettingsScreen(
     // ── 固定アプリ状態 ─────────────────────────────────────────────
     // SettingsScreen が開いたとき LauncherRepository.pinnedApps を読む。
     // SettingsScreen 内の変更はすぐ Repository に書き込む。
-    var localPinned by remember { mutableStateOf(LauncherRepository.pinnedApps) }
-    var showPicker  by remember { mutableStateOf(false) }
-    var pickerSlot  by remember { mutableIntStateOf(0) }
+    var localPinned      by remember { mutableStateOf(LauncherRepository.pinnedApps) }
+    var showPicker       by remember { mutableStateOf(false) }
+    var pickerSlot       by remember { mutableIntStateOf(0) }
+    var showHiddenPicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         // allApps がまだ未ロードなら IO スレッドでロード
@@ -69,7 +72,20 @@ fun SettingsScreen(
         }
     }
 
-    // ── アプリピッカーダイアログ ────────────────────────────────────
+    // ── 非表示アプリピッカーダイアログ ─────────────────────────────
+    if (showHiddenPicker) {
+        AppPickerDialog(
+            allApps  = LauncherRepository.allApps,
+            excluded = config.hiddenPackages.toSet(),
+            onSelect = { selectedApp ->
+                onConfigChange(config.copy(hiddenPackages = config.hiddenPackages + selectedApp.packageName))
+                showHiddenPicker = false
+            },
+            onDismiss = { showHiddenPicker = false }
+        )
+    }
+
+    // ── 固定アプリピッカーダイアログ ────────────────────────────────
     if (showPicker) {
         AppPickerDialog(
             allApps  = LauncherRepository.allApps,
@@ -127,6 +143,13 @@ fun SettingsScreen(
             value         = config.spacingPx,
             range         = 80f..220f,
             onValueChange = { onConfigChange(config.copy(spacingPx = it)) }
+        )
+        SettingSlider(
+            label         = stringResource(R.string.setting_ball_alpha),
+            hint          = stringResource(R.string.hint_ball_alpha),
+            value         = config.ballAlpha,
+            range         = 0.3f..1.0f,
+            onValueChange = { onConfigChange(config.copy(ballAlpha = it)) }
         )
         SettingSlider(
             label         = stringResource(R.string.setting_edge_darkness),
@@ -320,6 +343,38 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        // ---- フォアグラウンド検知 ----
+        SettingSection(title = stringResource(R.string.section_foreground_detection))
+
+        val isFgServiceEnabled = isForegroundServiceEnabled(context)
+        if (isFgServiceEnabled) {
+            Text(
+                text  = "有効（アプリ切り替えを即時検知しています）",
+                color = Color(0xFF88C0D0),
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else {
+            Text(
+                text  = "「ユーザー補助」で有効にすると、フローティングボールの非表示切替や履歴更新が即時になります。",
+                color = Color(0xFF81A1C1),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    )
+                }
+            ) {
+                Text("ユーザー補助設定を開く")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
         // ---- フローティング ----
         SettingSection(title = "フローティング")
 
@@ -347,6 +402,51 @@ fun SettingsScreen(
             } else {
                 Button(onClick = onStartOverlay) { Text("フローティング開始") }
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ---- 非表示アプリ ----
+        SettingSection(title = "フローティング非表示アプリ")
+
+        Text(
+            text  = "これらのアプリが前面にある場合、フローティングボールを非表示にします。",
+            color = Color(0xFF81A1C1),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        config.hiddenPackages.forEach { pkg ->
+            val label = LauncherRepository.allApps.find { it.packageName == pkg }?.label ?: pkg
+            Row(
+                modifier          = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text     = label,
+                    color    = Color.White,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                TextButton(
+                    onClick = {
+                        onConfigChange(config.copy(hiddenPackages = config.hiddenPackages - pkg))
+                    },
+                    contentPadding = PaddingValues(horizontal = 6.dp)
+                ) {
+                    Text("解除", color = Color(0xFFBF616A))
+                }
+            }
+        }
+
+        TextButton(
+            onClick  = { showHiddenPicker = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("＋ 非表示アプリを追加", color = Color(0xFF88C0D0))
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -513,4 +613,23 @@ private fun SettingSlider(
         )
         Spacer(modifier = Modifier.height(8.dp))
     }
+}
+
+// ── アクセシビリティサービス有効確認 ─────────────────────────────
+
+/**
+ * ForegroundAppService が現在有効になっているか Settings.Secure で確認する。
+ * ForegroundAppService.isRunning はプロセス再起動時にリセットされるため、
+ * OS の設定値を直接確認する方が信頼性が高い。
+ */
+private fun isForegroundServiceEnabled(context: android.content.Context): Boolean {
+    val am = context.getSystemService(android.content.Context.ACCESSIBILITY_SERVICE)
+            as? AccessibilityManager ?: return false
+    if (!am.isEnabled) return false
+    val flat = Settings.Secure.getString(
+        context.contentResolver,
+        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+    ) ?: return false
+    val target = "${context.packageName}/com.example.pullyluncher.ForegroundAppService"
+    return flat.split(":").any { it.equals(target, ignoreCase = true) }
 }

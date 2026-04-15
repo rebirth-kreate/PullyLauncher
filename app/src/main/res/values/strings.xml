@@ -23,4 +23,9 @@
     <string name="hint_edge_darkness">画面端の暗さを調整します</string>
     <string name="hint_background_glow">中央背景の光り方を調整します</string>
     <string name="hint_node_count">表示するアプリ数です</string>
+    <string name="setting_ball_alpha">ボール透明度</string>
+    <string name="hint_ball_alpha">フローティングボールと中央ボールの透明度を調整します</string>
+    <string name="accessibility_service_label">フォアグラウンドアプリ検知</string>
+    <string name="accessibility_service_description">フローティングボールを特定のアプリで自動的に非表示にするため、現在前面にあるアプリを検知します。ウィンドウの内容は読み取りません。</string>
+    <string name="section_foreground_detection">フォアグラウンドアプリ検知</string>
 </resources>
