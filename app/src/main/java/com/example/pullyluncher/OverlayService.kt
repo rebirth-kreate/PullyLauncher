@@ -141,8 +141,8 @@ class OverlayService : Service() {
         windowManager.addView(draw, drawParams)
 
         // ── touch Window（ボールサイズ・タッチ可能）──────────────────
-        // ヒット半径 = buttonRadiusPx × 1.2 に合わせてウィンドウサイズを決める
-        val touchRadius = cfg.buttonRadiusPx * 1.2f
+        // 視覚ボール半径と完全一致させる（倍率なし）
+        val touchRadius = cfg.buttonRadiusPx
         val size = (touchRadius * 2f).toInt()
         touchWindowSize = size
 
@@ -169,6 +169,11 @@ class OverlayService : Service() {
         touch.onPositionChanged = { cx, cy ->
             savedCenterX = cx
             savedCenterY = cy
+        }
+        touch.onMoveStateChanged = { isMoving ->
+            // MOVING 中はボールが BALL_MOVING_SCALE 倍に拡大するので touch Window も合わせる
+            val newRadius = cfg.buttonRadiusPx * (if (isMoving) BALL_MOVING_SCALE else 1.0f)
+            resizeTouchWindow(newRadius)
         }
         touch.onGoHome         = { goHome() }
         touch.onLaunchApp      = { pkg -> launchApp(pkg) }
@@ -205,6 +210,24 @@ class OverlayService : Service() {
         val half = touchWindowSize / 2f
         params.x = (cx - half).toInt()
         params.y = (cy - half).toInt()
+        try {
+            touchView?.let { windowManager.updateViewLayout(it, params) }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * touch Window のサイズを視覚ボール半径に合わせてリサイズする。
+     * MOVING 開始/終了時に呼ばれる。位置も同時に更新して中心がズレないようにする。
+     */
+    private fun resizeTouchWindow(radius: Float) {
+        val params = touchParams ?: return
+        val newSize = (radius * 2f).toInt()
+        if (touchWindowSize == newSize) return
+        touchWindowSize = newSize
+        params.width  = newSize
+        params.height = newSize
+        params.x = (savedCenterX - radius).toInt()
+        params.y = (savedCenterY - radius).toInt()
         try {
             touchView?.let { windowManager.updateViewLayout(it, params) }
         } catch (_: Exception) {}

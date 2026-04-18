@@ -23,6 +23,12 @@ private const val DEBUG_ANCHOR = false
 private const val BLOB_ORIGIN_DIR_RATIO = 0.0f
 
 /**
+ * 長押し移動中のボール視覚スケール。
+ * OverlayService の touch Window リサイズにも同じ値を使う（1箇所で管理）。
+ */
+internal const val BALL_MOVING_SCALE = 1.18f
+
+/**
  * 描画専用の全画面 View。
  *
  * ── 役割 ──────────────────────────────────────────────────────────────
@@ -168,7 +174,7 @@ class OverlayExpandView(context: Context) : View(context) {
     private fun drawIdleBall(canvas: Canvas, cx: Float, cy: Float, isMoving: Boolean) {
         val preset = ColorPresets.get(cfg.colorPreset)
         val alpha = cfg.ballAlpha
-        val r = blobRadius * (if (isMoving) 1.18f else 1.0f)
+        val r = blobRadius * (if (isMoving) BALL_MOVING_SCALE else 1.0f)
 
         blobFillPaint.shader = null
         blobFillPaint.color = applyAlphaF(preset.buttonColor, alpha * (if (isMoving) 0.82f else 1.0f))

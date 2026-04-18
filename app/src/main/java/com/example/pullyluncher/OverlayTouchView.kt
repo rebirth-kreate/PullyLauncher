@@ -107,6 +107,13 @@ class OverlayTouchView(
     var onHapticFeedback: (() -> Unit)? = null
     /** 描画 View の invalidate() を要求する。タッチ状態が変化した際に呼ぶ。 */
     var onDrawInvalidate: (() -> Unit)? = null
+    /**
+     * 長押し移動の開始/終了を通知する。
+     * Service はこれを受けて touch Window を視覚ボールと同じサイズにリサイズする。
+     *   true  → MOVING 開始（ボールが拡大表示される）
+     *   false → MOVING 終了（通常サイズに戻る）
+     */
+    var onMoveStateChanged: ((isMoving: Boolean) -> Unit)? = null
 
     // ── タッチイベント ─────────────────────────────────────────────
 
@@ -116,6 +123,14 @@ class OverlayTouchView(
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
+                // ── 円形ヒットテスト ──────────────────────────────────────────
+                // touch Window は正方形なので、角への誤タップを防ぐために
+                // ローカル座標で視覚円の内側かを判定する。
+                val lx = event.x - width / 2f
+                val ly = event.y - height / 2f
+                val hitR = currentVisualRadius()
+                if (lx * lx + ly * ly > hitR * hitR) return false
+
                 touchDownX = rawX
                 touchDownY = rawY
                 lastRawX = rawX
@@ -168,6 +183,7 @@ class OverlayTouchView(
                     }
                     TouchState.MOVING -> {
                         touchState = TouchState.IDLE
+                        onMoveStateChanged?.invoke(false)
                         onPositionChanged?.invoke(centerX, centerY)
                         onDrawInvalidate?.invoke()
                     }
@@ -193,6 +209,7 @@ class OverlayTouchView(
         touchDownY = lastRawY
         moveStartCenterX = centerX
         moveStartCenterY = centerY
+        onMoveStateChanged?.invoke(true)
         onDrawInvalidate?.invoke()
     }
 
@@ -268,6 +285,13 @@ class OverlayTouchView(
         if (isAxisReady) updateSelection()
         onDrawInvalidate?.invoke()
     }
+
+    /**
+     * 現在の視覚ボール半径を返す。
+     * OverlayExpandView.drawIdleBall と完全に同じ式を使い、描画と当たり判定を一致させる。
+     */
+    private fun currentVisualRadius(): Float =
+        LauncherRepository.config.buttonRadiusPx * (if (isMoving) BALL_MOVING_SCALE else 1.0f)
 
     private fun resetDragState() {
         dragX = centerX
