@@ -6,53 +6,121 @@
 
 ## 今回の目的
 
-パッケージインストール・アンインストール・更新イベントを受けて、
-フローティングランチャーのアプリ一覧を停止・再起動なしで自動反映する。
+パッケージ自動更新実装（前回コミット）のレビューフィードバックを受けて、
+BroadcastReceiver の登録方式と更新時のメタデータ反映を修正した。
 
 ---
 
 ## 完了したこと
 
-### 1. パッケージ変更 BroadcastReceiver を OverlayService に追加
+### 1. BroadcastReceiver 登録方式の修正
 
-`OverlayService` に動的 BroadcastReceiver を実装:
-- `onCreate()` で登録、`onDestroy()` で解除（ダブル登録・解除でもクラッシュしない）
-- targetSdk 35 対応: Android 13+ は `RECEIVER_NOT_EXPORTED` フラグ付きで登録
+**採用方式:** `ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)`
 
-登録するアクション:
-| アクション | 処理 |
+**採用理由:**
+
+| 検討項目 | 判断 |
 |---|---|
-| `ACTION_PACKAGE_REMOVED` + `EXTRA_REPLACING=true` | アイコンキャッシュのみ無効化（ADDED を待つ） |
-| `ACTION_PACKAGE_REMOVED` + `EXTRA_REPLACING=false` | allApps / pinnedApps / hiddenPackages から完全除去・キャッシュ削除・永続化 |
-| `ACTION_PACKAGE_ADDED` | 500ms デバウンス付きフルリフレッシュ（`loadAll`） |
-| `ACTION_PACKAGE_CHANGED` | 同上 |
-| `ACTION_PACKAGE_REPLACED` | 同上 |
+| システムブロードキャストの受信 | Android 公式ドキュメント: 「システムブロードキャストはフラグに関わらず常に配信される」→ RECEIVER_NOT_EXPORTED でも受信できる |
+| 外部アプリからの偽装ブロードキャスト | RECEIVER_NOT_EXPORTED により遮断できる。他アプリが ACTION_PACKAGE_ADDED 等を偽装して送信してもレシーバーに届かない |
+| RECEIVER_EXPORTED との比較 | EXPORTED は外部アプリからの送信を許可する。今回は protected broadcast のみを受信したいので不要かつリスクがある |
+| API バージョン対応 | ContextCompat が内部で処理する。API < 33 ではフラグなし `registerReceiver()` を呼び出す。手動の Build.VERSION チェックが不要になった |
+| Galaxy 互換性 | 標準 Android の仕組みに従うため問題なし |
 
-### 2. LauncherRepository にリフレッシュ・削除メソッドを追加
-
-| メソッド | 説明 |
-|---|---|
-| `scheduleAppsRefresh(context, reason)` | 500ms デバウンス付きフルリロード（Job キャンセル＆再スケジュール） |
-| `removePackage(context, packageName)` | 全リストから即時除去・IconCache 削除（IO へディスパッチ）・永続化 |
-| `invalidateIconCacheFor(context, packageName)` | メモリ＋ディスクキャッシュのみ削除 |
-
-### 3. AppIconCache に `delete` メソッドを追加
-
-`filesDir/app_icons/{packageName}.png` を削除する `delete(context, packageName)` を追加。
-
-### 4. フォールバックリフレッシュ
-
-- `OverlayService.onStartCommand()`: `allApps` が非空の場合（サービス再起動時）に `scheduleAppsRefresh` を呼ぶ
-- `MainActivity.onResume()`: 既存の `historyRefreshNonce++` に加えて `scheduleAppsRefresh(this, "on_resume")` を追加
-
-### 5. デバッグログ（BuildConfig.DEBUG のみ・タグ: `PullyApps`）
-
+**変更前:**
+```kotlin
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    registerReceiver(receiver, filter, RECEIVER_NOT_EXPORTED)
+} else {
+    @Suppress("UnspecifiedRegisterReceiverFlag")
+    registerReceiver(receiver, filter)
+}
 ```
-package event action=<action> package=<package> replacing=<true/false>
-refresh started reason=<reason>
-refresh completed oldCount=<count> newCount=<count> changed=<true/false>
-package removed from pinned=<true/false> hidden=<true/false>
-icon cache invalidated package=<package>
+
+**変更後:**
+```kotlin
+ContextCompat.registerReceiver(
+    this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
+)
+```
+
+### 2. onReceive の action ガードを追加
+
+```kotlin
+if (action !in PACKAGE_ACTIONS) return
+```
+
+`PACKAGE_ACTIONS` は companion object に定義した対象4種類の Set:
+```kotlin
+private val PACKAGE_ACTIONS = setOf(
+    Intent.ACTION_PACKAGE_ADDED,
+    Intent.ACTION_PACKAGE_REMOVED,
+    Intent.ACTION_PACKAGE_CHANGED,
+    Intent.ACTION_PACKAGE_REPLACED
+)
+```
+
+対象外の action および `intent.data?.schemeSpecificPart` が null の場合は即リターン。
+
+### 3. アプリ更新時のアイコン・ラベル再反映
+
+**問題だったこと:**
+
+- `ACTION_PACKAGE_CHANGED` / `ACTION_PACKAGE_REPLACED` 受信時にアイコンキャッシュを無効化していなかった
+- `ACTION_PACKAGE_ADDED` + replacing=true のとき、REMOVED 時の無効化が完了する前に ADDED が処理される可能性があった
+
+**修正内容:**
+
+| イベント | 修正前 | 修正後 |
+|---|---|---|
+| `PACKAGE_REMOVED` + replacing=true | アイコンキャッシュ無効化のみ | 同じ |
+| `PACKAGE_ADDED` + replacing=false | scheduleAppsRefresh のみ | 同じ |
+| `PACKAGE_ADDED` + replacing=true | scheduleAppsRefresh のみ | **アイコンキャッシュを再度無効化してから** scheduleAppsRefresh |
+| `PACKAGE_CHANGED` | scheduleAppsRefresh のみ | **アイコンキャッシュを無効化してから** scheduleAppsRefresh |
+| `PACKAGE_REPLACED` | scheduleAppsRefresh のみ | **アイコンキャッシュを無効化してから** scheduleAppsRefresh |
+
+これにより `loadAll` 実行時:
+- `iconBitmaps.containsKey(pkg)` → false（メモリキャッシュ除去済み）
+- `AppIconCache.load(context, pkg)` → null（ディスクキャッシュ削除済み）
+- PackageManager から新しい Drawable を取得して再生成 → ラベルも最新値
+
+### 4. `invalidateIconCacheFor` の IO スレッド修正
+
+BroadcastReceiver の `onReceive` はメインスレッドで実行される。
+`AppIconCache.delete` はファイル I/O のため、IO コルーチンにディスパッチする必要があった。
+
+**変更前 (メインスレッドでファイル I/O):**
+```kotlin
+fun invalidateIconCacheFor(context: Context, packageName: String) {
+    iconBitmaps.remove(packageName)
+    AppIconCache.delete(context, packageName)  // ← メインスレッドで I/O
+    ...
+}
+```
+
+**変更後 (IO ディスパッチ):**
+```kotlin
+fun invalidateIconCacheFor(context: Context, packageName: String) {
+    iconBitmaps.remove(packageName)
+    scope.launch { AppIconCache.delete(context, packageName) }  // ← IO スコープで非同期
+    ...
+}
+```
+
+500ms のデバウンス待機中に削除が完了するため、`loadAll` 実行時には常にキャッシュが消えている。
+
+### 5. `changed` ログの改善
+
+**変更前:** パッケージ件数の変化のみで判定 → 更新時に常に `changed=false`
+
+**変更後:**
+- `packageName → label` の Map で差分を比較（Bitmap 直接比較なし）
+- `package_event:*` 由来の呼び出しはラベル・アイコン更新の可能性があるため強制 `changed=true`
+
+```kotlin
+val forceChanged = reason.startsWith("package_event:")
+...
+val changed = forceChanged || oldAppInfo != newAppInfo
 ```
 
 ---
@@ -65,7 +133,7 @@ BUILD SUCCESSFUL in 9s
 33 actionable tasks: 33 executed
 
 .\gradlew.bat lintDebug --no-daemon
-BUILD SUCCESSFUL in 22s
+BUILD SUCCESSFUL in 20s
 Lint errors: 0
 ```
 
@@ -75,20 +143,18 @@ Lint errors: 0
 
 | ファイル | 変更内容 |
 |---|---|
-| `data/AppIconCache.kt` | `delete(context, packageName)` メソッドを追加 |
-| `LauncherRepository.kt` | `scheduleAppsRefresh` / `removePackage` / `invalidateIconCacheFor` を追加。`HiddenAppsPrefs` / `Log` / `BuildConfig` / `Job` / `delay` をインポート追加 |
-| `OverlayService.kt` | `packageReceiver` フィールド追加。`registerPackageReceiver()` / `unregisterPackageReceiver()` 追加。`onCreate` / `onDestroy` / `onStartCommand` を更新。`BroadcastReceiver` / `IntentFilter` インポート追加。`APPS_TAG` 定数追加 |
-| `MainActivity.kt` | `onResume()` に `scheduleAppsRefresh(this, "on_resume")` 追加 |
-| `.gitignore` | `.backup_*/` と `.idea/markdown.xml` を追加 |
+| `OverlayService.kt` | ContextCompat.registerReceiver に変更 / PACKAGE_ACTIONS ガード追加 / CHANGED・REPLACED・ADDED+replacing でアイコンキャッシュ無効化 / androidx.core.content.ContextCompat インポート追加 |
+| `LauncherRepository.kt` | `invalidateIconCacheFor` を IO ディスパッチに修正 / `scheduleAppsRefresh` の changed 判定を Map 比較＋強制フラグに改善 |
 
 ---
 
 ## Git 履歴
 
 ```
+fe3ca68 fix: ensure package broadcasts and app updates refresh
+883266e docs: update CHATGPT_HANDOFF for package auto-refresh feature
 f100503 fix: refresh launcher apps on package changes
 60e4e37 Update to Version 2
-aa73a66 Release version 2
 ```
 
 push 先: https://github.com/rebirth-kreate/PullyLauncher (main ブランチ)
@@ -123,41 +189,31 @@ tag:PullyApps
 tag:PullyVisibility
 ```
 
-### パッケージ変更テスト
+### テストシナリオ
 
-| シナリオ | 手順 | 期待する動作 |
+| シナリオ | 手順 | 期待する Logcat |
 |---|---|---|
-| 新規インストール | フローティングランチャー ON 中に Play ストアから適当なアプリをインストール | 停止・再開なしでアプリ一覧に反映（最大 500ms + ロード時間） |
-| アンインストール | ランチャーに表示されているアプリをアンインストール | アプリ一覧から即座に消える。固定・非表示設定からも削除される |
-| アプリ更新 | Play ストアでアプリをアップデート | アイコンが更新版に差し変わる（REMOVED + ADDED の組み合わせで処理） |
+| 新規インストール | フローティング ON 中に Play ストアからアプリをインストール | `package event action=...PACKAGE_ADDED package=xxx replacing=false` → `refresh started` → `refresh completed ... changed=true` |
+| アンインストール | ランチャーに表示中のアプリをアンインストール | `package event action=...PACKAGE_REMOVED ... replacing=false` → `package removed from pinned=? hidden=?` → `icon cache invalidated` |
+| アプリ更新 | Play ストアでアプリをアップデート | `PACKAGE_REMOVED replacing=true` → `icon cache invalidated` / `PACKAGE_ADDED replacing=true` → `icon cache invalidated` → `refresh started` → `refresh completed ... changed=true` |
+| コンポーネント変更 | 設定からアプリを無効化→有効化 | `PACKAGE_CHANGED` → `icon cache invalidated` → `refresh started` → `refresh completed ... changed=true` |
 
-### Logcat 確認例
+### 更新イベントの完全な Logcat 例
 
 ```
-# 新規インストール
-PullyApps: package event action=android.intent.action.PACKAGE_ADDED package=com.example.app replacing=false
-PullyApps: refresh started reason=package_event:android.intent.action.PACKAGE_ADDED
-PullyApps: refresh completed oldCount=42 newCount=43 changed=true
-
-# アンインストール
-PullyApps: package event action=android.intent.action.PACKAGE_REMOVED package=com.example.app replacing=false
-PullyApps: package removed from pinned=false hidden=false
-PullyApps: icon cache invalidated package=com.example.app
-
-# アプリ更新（旧バージョン削除）
 PullyApps: package event action=android.intent.action.PACKAGE_REMOVED package=com.example.app replacing=true
 PullyApps: icon cache invalidated package=com.example.app
-# アプリ更新（新バージョンインストール）
 PullyApps: package event action=android.intent.action.PACKAGE_ADDED package=com.example.app replacing=true
+PullyApps: icon cache invalidated package=com.example.app
 PullyApps: refresh started reason=package_event:android.intent.action.PACKAGE_ADDED
-PullyApps: refresh completed oldCount=42 newCount=42 changed=false
+PullyApps: refresh completed oldCount=42 newCount=42 changed=true
 ```
 
 ---
 
 ## 次に実施すべきこと
 
-1. **Galaxy 実機テスト** — 上記3シナリオを実機で確認
+1. **Galaxy 実機テスト** — 上記4シナリオを確認し、Logcat で changed=true を確認
 2. プライバシーポリシーを Web ページとして公開（GitHub Pages 等）
 3. keystore 生成・release ビルド設定
 4. Play Console — Data Safety・Foreground Service 申告・ストア説明文を入力
@@ -167,7 +223,7 @@ PullyApps: refresh completed oldCount=42 newCount=42 changed=false
 
 ## ChatGPTに相談したいこと
 
-1. Galaxy 実機で 3 シナリオ（新規インストール・アンインストール・更新）の挙動が期待通りか
-2. デバウンス 500ms が適切かどうか（アプリ更新時に REMOVED + ADDED が来るまでの間隔次第）
+1. Galaxy 実機テスト後に Logcat の `changed=true` が確認できたかどうか
+2. `ACTION_PACKAGE_CHANGED` が Samsung One UI で発火しないケースがないか（一部カスタム ROM では挙動が異なる場合がある）
 3. プライバシーポリシーの公開方法（GitHub Pages / Google Sites / Notion）
 4. Play Console Foreground Service 申告の英語テキストが適切かどうか
