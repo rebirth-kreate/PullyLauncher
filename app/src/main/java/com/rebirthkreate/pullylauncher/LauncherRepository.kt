@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * アプリ内とフローティングオーバーレイで共有するシングルトン。
@@ -70,7 +71,9 @@ object LauncherRepository {
      * メモリアイコンキャッシュ（セッション中の高速アクセス用）。
      * 一次ソースは AppIconCache のディスクキャッシュ。
      */
-    val iconBitmaps: MutableMap<String, Bitmap> = mutableMapOf()
+    // ConcurrentHashMap: loadAll が LaunchedEffect と scheduleAppsRefresh から
+    // 同時に呼ばれた場合の ConcurrentModificationException を防ぐ
+    val iconBitmaps: MutableMap<String, Bitmap> = ConcurrentHashMap()
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -130,6 +133,7 @@ object LauncherRepository {
      * 2回目以降はディスクからの読み込みのみで高速に完了する。
      */
     suspend fun loadAll(context: Context) {
+        if (BuildConfig.DEBUG) Log.d(APPS_TAG, "loadAll start thread=${Thread.currentThread().name}")
         allApps = UsageHistoryRepository.getRecentApps(context)
 
         val saved = PinnedAppsPrefs.load(context)
@@ -141,6 +145,7 @@ object LauncherRepository {
         allApps.forEach { loadIconIfNeeded(context, it) }
         // アイコンロード完了を通知（展開ビューの再描画トリガー）
         onIconsLoaded?.invoke()
+        if (BuildConfig.DEBUG) Log.d(APPS_TAG, "loadAll done appCount=${allApps.size} iconCount=${iconBitmaps.size}")
     }
 
     // ── 固定アプリ更新 ──────────────────────────────────────────────
@@ -166,22 +171,25 @@ object LauncherRepository {
      */
     private fun loadIconIfNeeded(context: Context, app: AppEntry) {
         if (iconBitmaps.containsKey(app.packageName)) return
+        try {
+            // ディスクキャッシュを試みる
+            val cached = AppIconCache.load(context, app.packageName)
+            if (cached != null) {
+                iconBitmaps[app.packageName] = cached
+                return
+            }
 
-        // ディスクキャッシュを試みる
-        val cached = AppIconCache.load(context, app.packageName)
-        if (cached != null) {
-            iconBitmaps[app.packageName] = cached
-            return
+            // Drawable から生成してメモリ＆ディスクに保存
+            val drawable = app.icon ?: return
+            val bm = Bitmap.createBitmap(ICON_PX, ICON_PX, Bitmap.Config.ARGB_8888)
+            val canvas = AndroidCanvas(bm)
+            drawable.setBounds(0, 0, ICON_PX, ICON_PX)
+            drawable.draw(canvas)
+            iconBitmaps[app.packageName] = bm
+            AppIconCache.save(context, app.packageName, bm)
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.w(APPS_TAG, "loadIconIfNeeded failed pkg=${app.packageName}", e)
         }
-
-        // Drawable から生成してメモリ＆ディスクに保存
-        val drawable = app.icon ?: return
-        val bm = Bitmap.createBitmap(ICON_PX, ICON_PX, Bitmap.Config.ARGB_8888)
-        val canvas = AndroidCanvas(bm)
-        drawable.setBounds(0, 0, ICON_PX, ICON_PX)
-        drawable.draw(canvas)
-        iconBitmaps[app.packageName] = bm
-        AppIconCache.save(context, app.packageName, bm)
     }
 
     // ── パッケージ変更対応 ────────────────────────────────────────────

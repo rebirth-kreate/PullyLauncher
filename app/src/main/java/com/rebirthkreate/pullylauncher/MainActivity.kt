@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,11 +17,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
+import com.rebirthkreate.pullylauncher.BuildConfig
 import com.rebirthkreate.pullylauncher.data.UiConfigPrefs
 import com.rebirthkreate.pullylauncher.model.LauncherUiConfig
 import com.rebirthkreate.pullylauncher.ui.theme.PullLauncherScreen
 import com.rebirthkreate.pullylauncher.ui.theme.SettingsScreen
 import com.rebirthkreate.pullylauncher.ui.theme.PullyLuncherTheme
+
+private const val STARTUP_TAG = "PullyStartup"
 
 class MainActivity : ComponentActivity() {
 
@@ -45,6 +49,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "MainActivity onCreate overlay=${Settings.canDrawOverlays(this)} service=${OverlayService.isRunning}")
         config.value = UiConfigPrefs.load(this)
         LauncherRepository.config = config.value
         refreshOverlayState()
@@ -98,12 +103,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "MainActivity onStart")
+    }
+
     override fun onResume() {
         super.onResume()
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "MainActivity onResume overlay=${Settings.canDrawOverlays(this)} service=${OverlayService.isRunning} appsLoaded=${LauncherRepository.allApps.size}")
         refreshOverlayState()
         historyRefreshNonce.intValue++
-        // フォールバックリフレッシュ: OverlayService が停止中にパッケージ変更があった場合に対応
-        LauncherRepository.scheduleAppsRefresh(this, "on_resume")
+        // フォールバックリフレッシュ: OverlayService が停止中にパッケージ変更があった場合に対応。
+        // allApps が未ロードの場合は LaunchedEffect が loadAll を呼ぶため二重実行を避ける。
+        if (LauncherRepository.allApps.isNotEmpty()) {
+            LauncherRepository.scheduleAppsRefresh(this, "on_resume")
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "MainActivity onPause finishing=$isFinishing changingConfigs=$isChangingConfigurations")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "MainActivity onStop")
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "MainActivity onDestroy finishing=$isFinishing changingConfigs=$isChangingConfigurations")
     }
 
     // ── オーバーレイ制御 ─────────────────────────────────────────
@@ -140,9 +169,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun doStartOverlayService() {
-        LauncherRepository.config = config.value
-        startForegroundService(Intent(this, OverlayService::class.java))
-        isOverlayRunning.value = true
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "doStartOverlayService called")
+        try {
+            LauncherRepository.config = config.value
+            startForegroundService(Intent(this, OverlayService::class.java))
+            isOverlayRunning.value = true
+            if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "doStartOverlayService succeeded")
+        } catch (e: Exception) {
+            Log.e(STARTUP_TAG, "doStartOverlayService failed: ${e.javaClass.simpleName} ${e.message}", e)
+        }
     }
 
     private fun stopOverlayService() {

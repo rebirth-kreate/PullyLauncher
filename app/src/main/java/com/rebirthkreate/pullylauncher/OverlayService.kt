@@ -83,6 +83,7 @@ class OverlayService : Service() {
 
         private const val CHANNEL_ID      = "pully_overlay_channel"
         private const val NOTIF_ID        = 1001
+        private const val STARTUP_TAG     = "PullyStartup"
         private const val VISIBILITY_TAG  = "PullyVisibility"
         private const val APPS_TAG        = "PullyApps"
 
@@ -102,6 +103,7 @@ class OverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "OverlayService onStartCommand flags=$flags appsLoaded=${LauncherRepository.allApps.size}")
         if (LauncherRepository.allApps.isEmpty()) {
             LauncherRepository.loadAppsIfNeeded(this)
         } else {
@@ -114,6 +116,7 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "OverlayService onCreate")
         isRunning = true
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
@@ -143,6 +146,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "OverlayService onDestroy")
         isRunning = false
         LauncherRepository.onIconsLoaded = null
         unregisterPackageReceiver()
@@ -153,74 +157,84 @@ class OverlayService : Service() {
     // ── 2ウィンドウ管理 ──────────────────────────────────────────
 
     private fun addOverlayViews() {
-        val cfg = LauncherRepository.config
-        val secureFlag = if (cfg.secureOverlay) WindowManager.LayoutParams.FLAG_SECURE else 0
+        if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "addOverlayViews start")
+        try {
+            val cfg = LauncherRepository.config
+            val secureFlag = if (cfg.secureOverlay) WindowManager.LayoutParams.FLAG_SECURE else 0
 
-        // ── draw Window（全画面・FLAG_NOT_TOUCHABLE）──────────────────
-        val draw = OverlayExpandView(this)
-        val drawParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    secureFlag,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
+            // ── draw Window（全画面・FLAG_NOT_TOUCHABLE）──────────────────
+            val draw = OverlayExpandView(this)
+            val drawParams = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        secureFlag,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+            }
+            drawLayoutParams = drawParams
+            drawView = draw
+            windowManager.addView(draw, drawParams)
+
+            // ── touch Window（ボールサイズ・タッチ可能）──────────────────
+            // 視覚ボール半径と完全一致させる（倍率なし）
+            val touchRadius = cfg.buttonRadiusPx
+            val size = (touchRadius * 2f).toInt()
+            touchWindowSize = size
+
+            val touch = OverlayTouchView(this, savedCenterX, savedCenterY)
+            val tParams = WindowManager.LayoutParams(
+                size, size,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or secureFlag,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = (savedCenterX - touchRadius).toInt()
+                y = (savedCenterY - touchRadius).toInt()
+            }
+            touchParams = tParams
+
+            // コールバック配線
+            touch.onBallMoved = { cx, cy ->
+                savedCenterX = cx
+                savedCenterY = cy
+                moveTouchWindow(cx, cy)
+                draw.invalidate()
+            }
+            touch.onPositionChanged = { cx, cy ->
+                savedCenterX = cx
+                savedCenterY = cy
+            }
+            touch.onMoveStateChanged = { isMoving ->
+                // MOVING 中はボールが BALL_MOVING_SCALE 倍に拡大するので touch Window も合わせる
+                val newRadius = cfg.buttonRadiusPx * (if (isMoving) BALL_MOVING_SCALE else 1.0f)
+                resizeTouchWindow(newRadius)
+            }
+            touch.onGoHome         = { goHome() }
+            touch.onLaunchApp      = { pkg -> launchApp(pkg) }
+            touch.onHapticFeedback = { performHaptic() }
+            touch.onDrawInvalidate = { draw.invalidate() }
+
+            // draw View に touch View を渡す（onDraw 内で状態を読む）
+            draw.touchView = touch
+
+            touchView = touch
+            windowManager.addView(touch, tParams)
+
+            applyBallVisibility()
+            if (BuildConfig.DEBUG) Log.d(STARTUP_TAG, "addOverlayViews done")
+        } catch (e: SecurityException) {
+            Log.e(STARTUP_TAG, "addOverlayViews: SYSTEM_ALERT_WINDOW not granted", e)
+            stopSelf()
+        } catch (e: Exception) {
+            Log.e(STARTUP_TAG, "addOverlayViews failed: ${e.javaClass.simpleName}", e)
+            stopSelf()
         }
-        drawLayoutParams = drawParams
-        drawView = draw
-        windowManager.addView(draw, drawParams)
-
-        // ── touch Window（ボールサイズ・タッチ可能）──────────────────
-        // 視覚ボール半径と完全一致させる（倍率なし）
-        val touchRadius = cfg.buttonRadiusPx
-        val size = (touchRadius * 2f).toInt()
-        touchWindowSize = size
-
-        val touch = OverlayTouchView(this, savedCenterX, savedCenterY)
-        val tParams = WindowManager.LayoutParams(
-            size, size,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or secureFlag,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = (savedCenterX - touchRadius).toInt()
-            y = (savedCenterY - touchRadius).toInt()
-        }
-        touchParams = tParams
-
-        // コールバック配線
-        touch.onBallMoved = { cx, cy ->
-            savedCenterX = cx
-            savedCenterY = cy
-            moveTouchWindow(cx, cy)
-            draw.invalidate()
-        }
-        touch.onPositionChanged = { cx, cy ->
-            savedCenterX = cx
-            savedCenterY = cy
-        }
-        touch.onMoveStateChanged = { isMoving ->
-            // MOVING 中はボールが BALL_MOVING_SCALE 倍に拡大するので touch Window も合わせる
-            val newRadius = cfg.buttonRadiusPx * (if (isMoving) BALL_MOVING_SCALE else 1.0f)
-            resizeTouchWindow(newRadius)
-        }
-        touch.onGoHome         = { goHome() }
-        touch.onLaunchApp      = { pkg -> launchApp(pkg) }
-        touch.onHapticFeedback = { performHaptic() }
-        touch.onDrawInvalidate = { draw.invalidate() }
-
-        // draw View に touch View を渡す（onDraw 内で状態を読む）
-        draw.touchView = touch
-
-        touchView = touch
-        windowManager.addView(touch, tParams)
-
-        applyBallVisibility()
     }
 
     private fun removeOverlayViews() {
