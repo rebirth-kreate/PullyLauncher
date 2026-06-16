@@ -1,19 +1,17 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Data Extraction Rules（API 31 以降）。
+
+    include のみ指定することで、列挙したファイルだけをバックアップ対象にする。
+    pully_hidden_prefs（非表示アプリ一覧）や app_icons は指定外のため自動除外される。
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <include domain="sharedpref" path="ui_config.xml" />
+        <include domain="sharedpref" path="pully_prefs.xml" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <include domain="sharedpref" path="ui_config.xml" />
+        <include domain="sharedpref" path="pully_prefs.xml" />
     </device-transfer>
-    -->
 </data-extraction-rules>

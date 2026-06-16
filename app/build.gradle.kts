@@ -4,17 +4,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.pullyluncher"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    namespace = "com.rebirthkreate.pullylauncher"
+    compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.pullyluncher"
+        applicationId = "com.rebirthkreate.pullylauncher"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 

@@ -23,4 +23,6 @@
     <string name="hint_edge_darkness">Adjust the darkness around the screen edges</string>
     <string name="hint_background_glow">Adjust the glow around the center background</string>
     <string name="hint_node_count">Number of visible app nodes</string>
+    <string name="setting_ball_alpha">Ball opacity</string>
+    <string name="hint_ball_alpha">Adjust the opacity of the floating ball and center ball</string>
 </resources>

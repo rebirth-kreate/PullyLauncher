@@ -2,20 +2,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- オーバーレイ表示権限（SYSTEM_ALERT_WINDOW）-->
+    <!-- オーバーレイ表示権限 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <!-- フォアグラウンドサービス権限（API 28+、宣言自体は全バージョンで安全）-->
+    <!-- フォアグラウンドサービス権限 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- specialUse 型フォアグラウンドサービス権限（API 34+）-->
+    <!-- specialUse 型フォアグラウンドサービス権限（API 34+） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- 触覚フィードバック（バイブレーション）権限 -->
+    <!-- 触覚フィードバック -->
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- 使用履歴アクセス権限（PACKAGE_USAGE_STATS）: 最近使ったアプリ順の表示に使用 -->
+    <!-- 使用履歴アクセス：最近使ったアプリ順の表示・非表示アプリ検知に使用 -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+    <!-- 実行中通知の表示（API 33+） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Android 11+ のパッケージ可視性: ランチャーアプリ一覧を取得するために必要 -->
+    <!-- Android 11+ のパッケージ可視性：ランチャーアプリ一覧取得用 -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -52,23 +54,10 @@
         <service
             android:name=".OverlayService"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
-
-        <!--
-            フォアグラウンドアプリをイベント駆動で検知するアクセシビリティサービス。
-            ユーザーが設定 → ユーザー補助 で手動有効化する必要がある。
-        -->
-        <service
-            android:name=".ForegroundAppService"
-            android:exported="true"
-            android:label="@string/accessibility_service_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains a user-enabled floating launcher overlay so it remains available while other apps are in use." />
         </service>
 
     </application>
