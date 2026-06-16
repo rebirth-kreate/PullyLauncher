@@ -189,11 +189,11 @@ object LauncherRepository {
     /**
      * アプリ更新時にアイコンキャッシュ（メモリ＋ディスク）を無効化する。
      * 次の loadAll() 呼び出しで新しいアイコンが再生成される。
-     * IO スレッドで呼ぶこと。
+     * 任意のスレッドから呼べる（ディスク削除は IO へディスパッチ）。
      */
     fun invalidateIconCacheFor(context: Context, packageName: String) {
         iconBitmaps.remove(packageName)
-        AppIconCache.delete(context, packageName)
+        scope.launch { AppIconCache.delete(context, packageName) }
         if (BuildConfig.DEBUG) Log.d(APPS_TAG, "icon cache invalidated package=$packageName")
     }
 
@@ -235,16 +235,24 @@ object LauncherRepository {
      * アプリ一覧をデバウンス付きでフルリロードする。
      * 連続したパッケージイベント（例: REMOVED + ADDED on update）を 1 回のリロードにまとめる。
      * IO スレッドで実行される。
+     *
+     * changed ログの判定:
+     *   - パッケージ名＋ラベルの Map で差分を検出（アイコン Bitmap の直接比較は行わない）
+     *   - package_event:* 由来の呼び出しはラベル・アイコン更新の可能性があるため強制 changed=true
      */
     fun scheduleAppsRefresh(context: Context, reason: String) {
+        val forceChanged = reason.startsWith("package_event:")
         refreshJob?.cancel()
         refreshJob = scope.launch {
             delay(REFRESH_DEBOUNCE_MS)
             if (BuildConfig.DEBUG) Log.d(APPS_TAG, "refresh started reason=$reason")
-            val oldCount = allApps.size
+            val oldAppInfo = allApps.associate { it.packageName to it.label }
+            val oldCount   = oldAppInfo.size
             loadAll(context)
-            val newCount = allApps.size
-            if (BuildConfig.DEBUG) Log.d(APPS_TAG, "refresh completed oldCount=$oldCount newCount=$newCount changed=${oldCount != newCount}")
+            val newCount   = allApps.size
+            val newAppInfo = allApps.associate { it.packageName to it.label }
+            val changed    = forceChanged || oldAppInfo != newAppInfo
+            if (BuildConfig.DEBUG) Log.d(APPS_TAG, "refresh completed oldCount=$oldCount newCount=$newCount changed=$changed")
         }
     }
 }

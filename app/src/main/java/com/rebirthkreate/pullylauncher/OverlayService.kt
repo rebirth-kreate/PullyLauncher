@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import androidx.core.content.ContextCompat
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
@@ -87,6 +88,13 @@ class OverlayService : Service() {
 
         /** UsageStats ポーリング間隔（画面点灯中）。Galaxy 実機テスト後に調整可。 */
         const val POLL_INTERVAL_MS = 850L
+
+        private val PACKAGE_ACTIONS = setOf(
+            Intent.ACTION_PACKAGE_ADDED,
+            Intent.ACTION_PACKAGE_REMOVED,
+            Intent.ACTION_PACKAGE_CHANGED,
+            Intent.ACTION_PACKAGE_REPLACED
+        )
     }
 
     // ── ライフサイクル ────────────────────────────────────────────
@@ -377,7 +385,9 @@ class OverlayService : Service() {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 val action = intent.action ?: return
-                val pkg    = intent.data?.schemeSpecificPart ?: return
+                // protected broadcast 以外は無視（action が対象外の場合もガード）
+                if (action !in PACKAGE_ACTIONS) return
+                val pkg = intent.data?.schemeSpecificPart ?: return
                 val replacing = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
 
                 if (BuildConfig.DEBUG) {
@@ -394,9 +404,17 @@ class OverlayService : Service() {
                             LauncherRepository.removePackage(this@OverlayService, pkg)
                         }
                     }
-                    Intent.ACTION_PACKAGE_ADDED,
+                    Intent.ACTION_PACKAGE_ADDED -> {
+                        if (replacing) {
+                            // 更新完了時: REMOVED で無効化済みだが念のため再度無効化する
+                            LauncherRepository.invalidateIconCacheFor(this@OverlayService, pkg)
+                        }
+                        LauncherRepository.scheduleAppsRefresh(this@OverlayService, "package_event:$action")
+                    }
                     Intent.ACTION_PACKAGE_CHANGED,
                     Intent.ACTION_PACKAGE_REPLACED -> {
+                        // コンポーネント変更: ラベル・アイコンが変わっている可能性があるためキャッシュを無効化
+                        LauncherRepository.invalidateIconCacheFor(this@OverlayService, pkg)
                         LauncherRepository.scheduleAppsRefresh(this@OverlayService, "package_event:$action")
                     }
                 }
@@ -411,12 +429,14 @@ class OverlayService : Service() {
             addDataScheme("package")
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(receiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(receiver, filter)
-        }
+        // RECEIVER_NOT_EXPORTED を使用する理由:
+        //   - Android ドキュメントより「システムブロードキャストはフラグに関わらず常に配信される」
+        //   - protected broadcast (PACKAGE_ADDED 等) はシステムプロセスのみが送信可能
+        //   - 外部アプリからの偽装ブロードキャストを拒否できるため EXPORTED より安全
+        //   - ContextCompat が API バージョン分岐を内部で処理する（API < 33 ではフラグなし呼出し）
+        ContextCompat.registerReceiver(
+            this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         packageReceiver = receiver
     }
