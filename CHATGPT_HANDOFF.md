@@ -1,84 +1,156 @@
 # CHATGPT_HANDOFF.md
 
-最終更新: 2026-06-16
+最終更新: 2026-06-17
 
 ---
 
 ## 今回の目的
 
-「PullyLauncherを起動すると、画面が一瞬表示されたあと、すぐに終了してホーム画面へ戻ってしまいます」の原因特定と修正。
+「PullyLauncherを起動すると、画面が一瞬表示されたあと、すぐに終了してホーム画面へ戻ってしまいます」の根本原因特定と修正（エミュレーター実機確認済み）。
 
 ---
 
-## 特定した根本原因
+## デバッガー切断 vs プロセス終了の判定
 
-**`iconBitmaps` HashMap の concurrent modification による ConcurrentModificationException**
+**プロセス終了（クラッシュ）でした。**
 
-起動時のシーケンスがクラッシュを引き起こしていた:
-
-1. `onResume()` が呼ばれる（`setContent` 直後）
-2. `historyRefreshNonce.intValue++` → Compose 再コンポーズがスケジュールされる
-3. `scheduleAppsRefresh(this, "on_resume")` → 500ms delay の IO コルーチンが開始する
-4. 最初のフレーム (≈16ms 後) に `LaunchedEffect(nonce=1)` が発火 → `loadAll()` を IO スレッドで実行
-5. ≈500ms 後に scheduleAppsRefresh も `loadAll()` を IO スレッドで実行
-6. 両方の `loadIconIfNeeded` が `iconBitmaps[pkg] = bm` を異なる IO スレッドから同時呼び出し
-7. `LaunchedEffect` の `for ((pkg, bm) in LauncherRepository.iconBitmaps)` がメインスレッドで回る
-8. **非スレッドセーフな LinkedHashMap への concurrent put + main-thread iteration → ConcurrentModificationException**
-9. 例外が LaunchedEffect を通じて Activity クラッシュとして伝播 → 「一瞬表示されて終了」
-
-初回起動時（ディスクキャッシュなし）は `loadAll` に 500ms 以上かかる（アプリ数が多いほど顕著）ため、再現しやすい。
-
----
-
-## 完了したこと
-
-### 1. `LauncherRepository.iconBitmaps` を ConcurrentHashMap に変更
-
-```kotlin
-// 変更前
-val iconBitmaps: MutableMap<String, Bitmap> = mutableMapOf()
-
-// 変更後
-val iconBitmaps: MutableMap<String, Bitmap> = ConcurrentHashMap()
+```
+adb shell pidof com.rebirthkreate.pullylauncher
+→ '' (空)  ← 修正前
+→ '22562'  ← 修正後、5秒・10秒後も生存
 ```
 
-IO スレッドからの concurrent put とメインスレッドからのイテレーションが安全になった。
+---
 
-### 2. `onResume` の `scheduleAppsRefresh` ガード追加
+## 実際の例外全文
+
+```
+06-16 15:10:09.608  E AndroidRuntime: FATAL EXCEPTION: main
+06-16 15:10:09.608  E AndroidRuntime: Process: com.rebirthkreate.pullylauncher, PID: 22116
+06-16 15:10:09.608  E AndroidRuntime: java.lang.RuntimeException: Unable to instantiate activity
+    ComponentInfo{com.rebirthkreate.pullylauncher/com.rebirthkreate.pullylauncher.MainActivity}
+06-16 15:10:09.608  E AndroidRuntime: Caused by: java.lang.ClassNotFoundException:
+    Didn't find class "com.rebirthkreate.pullylauncher.MainActivity" on path:
+    DexPathList[[zip file ".../base.apk"], nativeLibraryDirectories=[.../x86_64, ...]]
+06-16 15:10:09.613  W ActivityTaskManager: Force finishing activity
+    com.rebirthkreate.pullylauncher/.MainActivity
+```
+
+---
+
+## 前回の ConcurrentModificationException 修正について
+
+**有効性が未確認のまま終わっていた**（Kotlinが全くコンパイルされていなかったため、前回修正コードも DEX に存在していなかった）。
+
+---
+
+## 本当の根本原因
+
+**`org.jetbrains.kotlin.android` プラグインが初回コミットから一度も適用されていなかった。**
+
+| 問題点 | 詳細 |
+|---|---|
+| 欠けていたプラグイン | `org.jetbrains.kotlin.android` |
+| 存在していたプラグイン | `org.jetbrains.kotlin.plugin.compose`（Compose compiler addon のみ） |
+| 影響 | Kotlinソースファイルが**一切コンパイルされない** |
+| APKの内容 | Rクラス（javac生成）＋サードパーティライブラリのDEXのみ |
+| クラッシュ | `ClassNotFoundException: MainActivity` が起動直後に発生 |
+
+**なぜビルドが「SUCCESSFUL」だったか**:
+- AGPはKotlinプラグインがなくてもエラーを出さない（Kotlinファイルを無視するだけ）
+- `BuildConfig` の未解決参照エラーも Kotlin コンパイルタスク自体が存在しないため表示されなかった
+- Rクラス（Java）はAGPのリソースパイプラインで別途コンパイルされるためDEXに含まれていた
+
+**なぜ「一瞬表示」されていたか**:
+Android Studio の起動コマンドに含まれる `--splashscreen-show-icon` でスプラッシュ画面（アプリアイコン）が一瞬表示されてから `ClassNotFoundException` で即クラッシュしていた。
+
+---
+
+## 問題のファイルと行
+
+| ファイル | 問題 |
+|---|---|
+| `gradle/libs.versions.toml` | `[plugins]` に `kotlin-android` が未定義 |
+| `build.gradle.kts`（ルート） | `kotlin-android` の宣言なし |
+| `app/build.gradle.kts` | `alias(libs.plugins.kotlin.android)` 未適用 / `kotlinOptions` 未設定 / `buildConfig = true` 未設定 |
+
+---
+
+## 修正内容
+
+### `gradle/libs.versions.toml`
+
+```toml
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }  # ← 追加
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+```
+
+### `build.gradle.kts`（ルート）
 
 ```kotlin
-// 変更前
-LauncherRepository.scheduleAppsRefresh(this, "on_resume")
-
-// 変更後
-if (LauncherRepository.allApps.isNotEmpty()) {
-    LauncherRepository.scheduleAppsRefresh(this, "on_resume")
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false  // ← 追加
+    alias(libs.plugins.kotlin.compose) apply false
 }
 ```
 
-初回起動時（allApps 未ロード）は LaunchedEffect が loadAll を担当するため、scheduleAppsRefresh による二重呼び出しを防ぐ。
+### `app/build.gradle.kts`
 
-### 3. `loadIconIfNeeded` を try-catch で保護
+```kotlin
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)   // ← 追加：Kotlinコンパイル有効化
+    alias(libs.plugins.kotlin.compose)
+}
 
-Drawable の描画例外（AdaptiveIconDrawable 等）が loadAll 全体をクラッシュさせないようにした。
+android {
+    // ...
+    compileOptions { ... }
+    kotlinOptions { jvmTarget = "11" }  // ← 追加
+    buildFeatures {
+        compose = true
+        buildConfig = true  // ← 追加：BuildConfigクラス生成
+    }
+}
+```
 
-### 4. `doStartOverlayService` を try-catch で保護
+---
 
-Android 12+ で起こりうる `ForegroundServiceStartNotAllowedException` を捕捉してクラッシュを防ぐ。
+## エミュレーター実機確認結果
 
-### 5. `addOverlayViews` を try-catch で保護
+テスト環境: Pixel 9a エミュレーター (API 35, x86_64)
 
-SYSTEM_ALERT_WINDOW 権限が剥奪された場合の `SecurityException` を捕捉して `stopSelf()` を呼ぶ（プロセスクラッシュを防ぐ）。
+### 上書きインストール（`adb install -r`）
 
-### 6. PullyStartup デバッグログを追加
+```
+Status: ok  LaunchState: COLD  TotalTime: 1675  WaitTime: 1681
+PID at 5s:  '22562'   ← 生存
+PID at 10s: '22562'   ← 生存
+PullyStartup: MainActivity onCreate overlay=false service=false
+PullyStartup: MainActivity onStart
+PullyStartup: MainActivity onResume overlay=false service=false appsLoaded=0
+PullyApps: loadAll start thread=DefaultDispatcher-worker-1
+PullyApps: loadAll done appCount=19 iconCount=19
+FATAL EXCEPTION: なし
+onDestroy finishing=true: なし
+```
 
-Logcat タグ `PullyStartup` で起動シーケンスをトレースできるようになった:
+### クリーンインストール（`adb uninstall` → `adb install`）
 
-| ファイル | ログポイント |
-|---|---|
-| `MainActivity` | `onCreate` / `onStart` / `onResume` / `onPause` / `onStop` / `onDestroy`（パーミッション状態・サービス状態・finishing/changingConfigs を含む） |
-| `OverlayService` | `onCreate` / `onStartCommand` / `onDestroy` / `addOverlayViews` の開始・完了 |
-| `LauncherRepository` | `loadAll` の開始・完了（アプリ数・アイコン数を含む） |
+```
+Status: ok  LaunchState: COLD  TotalTime: 1782  WaitTime: 1789
+PID at 8s: '22914'   ← 生存
+PullyStartup: MainActivity onCreate overlay=false service=false
+PullyStartup: MainActivity onStart
+PullyStartup: MainActivity onResume overlay=false service=false appsLoaded=0
+PullyApps: loadAll done appCount=19 iconCount=19
+FATAL EXCEPTION: なし
+```
+
+両ケースで確認完了。
 
 ---
 
@@ -86,34 +158,30 @@ Logcat タグ `PullyStartup` で起動シーケンスをトレースできるよ
 
 ```
 .\gradlew.bat clean assembleDebug --no-daemon
-BUILD SUCCESSFUL in 10s
-33 actionable tasks: 33 executed
+BUILD SUCCESSFUL in 21s
+37 actionable tasks: 37 executed
 
 .\gradlew.bat lintDebug --no-daemon
 BUILD SUCCESSFUL in 19s
 Lint errors: 0
 ```
 
----
-
-## 変更したファイル
-
-| ファイル | 変更内容 |
-|---|---|
-| `LauncherRepository.kt` | `iconBitmaps` を ConcurrentHashMap に変更 / `loadIconIfNeeded` を try-catch で保護 / `loadAll` にデバッグログ追加 |
-| `MainActivity.kt` | `onResume` の scheduleAppsRefresh にガード追加 / `doStartOverlayService` を try-catch で保護 / PullyStartup ライフサイクルログ追加 / `onStart` / `onPause` / `onStop` / `onDestroy` を override |
-| `OverlayService.kt` | `addOverlayViews` を try-catch で保護（SecurityException は stopSelf） / PullyStartup ログ追加 |
-| `.gitignore` | `/.idea/deploymentTargetSelector.xml` を追加（誤コミット防止） |
+Kotlin コンパイル警告（エラーではない）:
+- `MOVE_TO_FOREGROUND` deprecated (UsageHistoryRepository.kt:78)
+- `checkOpNoThrow` deprecated (UsageHistoryRepository.kt:93)
+- GestureMath.kt: shadowed extension operators
+- SettingsScreen.kt: `LocalLifecycleOwner` deprecated
 
 ---
 
 ## Git 履歴
 
 ```
+4277b26 fix: resolve remaining startup process termination
+d2e61e0 docs: update CHATGPT_HANDOFF for startup crash fix
 dd54412 chore: remove .idea/deploymentTargetSelector.xml from tracking
 e3ac651 fix: prevent PullyLauncher from closing on startup
 fe3ca68 fix: ensure package broadcasts and app updates refresh
-883266e docs: update CHATGPT_HANDOFF for package auto-refresh feature
 f100503 fix: refresh launcher apps on package changes
 60e4e37 Update to Version 2
 ```
@@ -135,61 +203,38 @@ push 先: https://github.com/rebirth-kreate/PullyLauncher (main ブランチ)
 
 ---
 
-## Galaxy 実機テスト手順
-
-### インストール
-
-```powershell
-adb install -r app\build\outputs\apk\debug\app-debug.apk
-```
-
-### Logcat フィルタ（起動問題の診断）
+## Logcatフィルタ（今後の実機確認用）
 
 ```
-tag:PullyStartup
+tag:PullyStartup tag:PullyApps
 ```
-
-期待する正常起動時のログシーケンス:
-```
-PullyStartup: MainActivity onCreate overlay=true service=false
-PullyStartup: MainActivity onStart
-PullyStartup: MainActivity onResume overlay=true service=false appsLoaded=0
-PullyApps: loadAll start thread=...
-PullyApps: loadAll done appCount=XX iconCount=XX
-PullyStartup: (クラッシュなし → アプリが表示されたまま)
-```
-
-クラッシュが再現した場合は `onDestroy finishing=true` の前後のログを確認する。
-
-### テストシナリオ
-
-| シナリオ | 確認ポイント |
-|---|---|
-| 初回起動（オーバーレイ権限あり） | onResume まで正常に流れ、その後 onPause/onStop が呼ばれないこと |
-| 初回起動（オーバーレイ権限なし） | 同上（サービスを起動しなくても MainActivityが落ちないこと） |
-| フローティング開始 | `doStartOverlayService called` → `succeeded` のログが出ること |
-| アプリ更新後に戻る | `refresh completed ... changed=true` が Logcat に出ること |
 
 ---
 
-## 現在の問題
+## 残留 Kotlin 警告（後回し可）
 
-現在は問題なし。実機テストで確認後に次のフェーズへ。
+| ファイル | 警告 | 対応方針 |
+|---|---|---|
+| `UsageHistoryRepository.kt:78` | `MOVE_TO_FOREGROUND` deprecated | UsageEvents.Event.MOVE_TO_FOREGROUND に変更 |
+| `UsageHistoryRepository.kt:93` | `checkOpNoThrow` deprecated | AppOpsManager.unsafeCheckOpNoThrow 等に変更 |
+| `GestureMath.kt:19-27` | shadowed extension operators | `operator fun times/plus/minus` を削除して標準メンバーを使う |
+| `SettingsScreen.kt:63` | `LocalLifecycleOwner` deprecated | `androidx.lifecycle.compose` パッケージへ移行 |
 
 ---
 
 ## 次に実施すべきこと
 
-1. **Galaxy 実機テスト** — 上記シナリオで PullyStartup ログを確認し、クラッシュが解消されているか検証
-2. プライバシーポリシーを Web ページとして公開（GitHub Pages 等）
-3. keystore 生成・release ビルド設定
-4. Play Console — Data Safety・Foreground Service 申告・ストア説明文を入力
+1. **Galaxy実機での確認** — エミュレーター確認済み。実機でも同様に起動することを確認
+2. オーバーレイパーミッション付与後にフローティングボタンが表示されるか確認
+3. プライバシーポリシーを Web ページとして公開（GitHub Pages 等）
+4. keystore 生成・release ビルド設定
+5. Play Console — Data Safety・Foreground Service 申告
 
 ---
 
 ## ChatGPTに相談したいこと
 
-1. Galaxy 実機テストで起動クラッシュが解消されたか確認
-2. `ConcurrentHashMap` に変更したことで `iconBitmaps` の順序が変わる可能性があるが（LinkedHashMap は挿入順保持）、`appSlots` のスロット表示に影響があるか
-3. プライバシーポリシーの公開方法（GitHub Pages / Google Sites / Notion）
-4. Play Console Foreground Service 申告の英語テキストが適切かどうか
+1. Galaxy実機での起動確認結果
+2. 上記の deprecated 警告を修正すべきか（Play Store 審査に影響するか）
+3. プライバシーポリシーの公開方法
+4. フローティングボタン動作確認（オーバーレイ権限付与後）
