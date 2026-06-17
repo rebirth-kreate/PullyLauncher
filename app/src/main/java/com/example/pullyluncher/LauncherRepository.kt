@@ -41,13 +41,6 @@ object LauncherRepository {
         set(value) { _configFlow.value = value }
 
     /**
-     * フォアグラウンドアプリが切り替わったときに呼ばれるコールバック。
-     * ForegroundAppService が発火し、OverlayService がボール可視判定に使用する。
-     * Service.onDestroy で null にリセットすること。
-     */
-    @Volatile var onForegroundChanged: (() -> Unit)? = null
-
-    /**
      * loadAll() でアイコンのロードが完了したときに呼ばれるコールバック。
      * OverlayService が展開ビューの再描画トリガーに使用する。
      */
@@ -110,9 +103,8 @@ object LauncherRepository {
         if (allApps.isNotEmpty()) {
             allApps = UsageHistoryRepository.reorderByUsage(context, allApps)
         }
-        // currentForegroundPackage は ForegroundAppService が即時・正確に管理する。
-        // UsageStatsManager は最大数十秒の遅延があるため、ここでは上書きしない。
-        // 上書きすると「非表示アプリ離脱後も古い値で hide が継続する」バグが発生する。
+        // currentForegroundPackage は OverlayService の 750ms ポーリングが管理する。
+        // UsageStatsManager の fulfillment には遅延があるため、ここでは上書きしない。
     }
 
     /** refreshHistory の非 suspend ラッパー（Service など非コルーチンコンテキスト用）。 */

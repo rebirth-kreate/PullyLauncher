@@ -18,9 +18,9 @@
     <!-- %d に MAX_PINS の値を渡す -->
     <string name="section_pinned_apps">Pinned Apps (up to %d)</string>
     <string name="section_usage_history">Usage History</string>
-    <string name="section_foreground_detection">Foreground App Detection</string>
     <string name="section_floating">Floating</string>
     <string name="section_hidden_apps">Hidden Apps</string>
+    <string name="section_secure_overlay">Screenshot Exclusion</string>
 
     <!-- ── 設定ラベル ── -->
     <string name="setting_button_radius">Main Ball Size</string>
@@ -59,11 +59,6 @@
     <string name="usage_history_enabled">Apps are sorted by recent usage.</string>
     <string name="usage_history_disabled">Grant \"Usage Access\" permission to sort apps by recent usage. Without it, apps are listed alphabetically.</string>
 
-    <!-- ── フォアグラウンド検知 ── -->
-    <string name="foreground_detection_enabled">Enabled — detecting app switches in real time.</string>
-    <string name="foreground_detection_disabled">Enable in Accessibility settings for instant overlay hide/show and history updates.</string>
-    <string name="open_accessibility_settings">Open Accessibility Settings</string>
-
     <!-- ── フローティング制御 ── -->
     <string name="overlay_permission_required">Permission to \"Draw over other apps\" is required to show the floating ball.</string>
     <string name="grant_overlay_permission">Grant Permission</string>
@@ -79,7 +74,7 @@
     <!-- ── アプリピッカー ── -->
     <string name="picker_title">Select App</string>
 
-    <!-- ── アクセシビリティサービス ── -->
-    <string name="accessibility_service_label">Foreground App Detection</string>
-    <string name="accessibility_service_description">Detects which app is currently in the foreground so the floating ball can be automatically hidden for specific apps. Window contents are never read.</string>
+    <!-- ── スクリーンショット除外 ── -->
+    <string name="setting_secure_overlay">Hide from screenshots and recordings</string>
+    <string name="hint_secure_overlay">Hides Pully from screenshots, screen recordings, and screen sharing.</string>
 </resources>

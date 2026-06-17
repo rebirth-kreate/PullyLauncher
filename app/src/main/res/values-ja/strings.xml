@@ -17,9 +17,9 @@
     <string name="section_behavior">挙動</string>
     <string name="section_pinned_apps">固定アプリ（最大%d件）</string>
     <string name="section_usage_history">使用履歴</string>
-    <string name="section_foreground_detection">フォアグラウンドアプリ検知</string>
     <string name="section_floating">フローティング</string>
     <string name="section_hidden_apps">フローティング非表示アプリ</string>
+    <string name="section_secure_overlay">スクリーンショット除外</string>
 
     <!-- ── 設定ラベル ── -->
     <string name="setting_button_radius">メインボタンサイズ</string>
@@ -58,11 +58,6 @@
     <string name="usage_history_enabled">最近使ったアプリ順に表示します。</string>
     <string name="usage_history_disabled">「使用履歴へのアクセス」権限を付与すると最近使ったアプリ順に表示されます。\n未付与の場合はアルファベット順になります。</string>
 
-    <!-- ── フォアグラウンド検知 ── -->
-    <string name="foreground_detection_enabled">有効（アプリ切り替えを即時検知しています）</string>
-    <string name="foreground_detection_disabled">「ユーザー補助」で有効にすると、フローティングボールの非表示切替や履歴更新が即時になります。</string>
-    <string name="open_accessibility_settings">ユーザー補助設定を開く</string>
-
     <!-- ── フローティング制御 ── -->
     <string name="overlay_permission_required">他アプリ上への表示には「他のアプリの上に重ねて表示」権限が必要です。</string>
     <string name="grant_overlay_permission">表示権限を許可する</string>
@@ -78,7 +73,7 @@
     <!-- ── アプリピッカー ── -->
     <string name="picker_title">アプリを選択</string>
 
-    <!-- ── アクセシビリティサービス ── -->
-    <string name="accessibility_service_label">フォアグラウンドアプリ検知</string>
-    <string name="accessibility_service_description">フローティングボールを特定のアプリで自動的に非表示にするため、現在前面にあるアプリを検知します。ウィンドウの内容は読み取りません。</string>
+    <!-- ── スクリーンショット除外 ── -->
+    <string name="setting_secure_overlay">スクリーンショット・画面録画に表示しない</string>
+    <string name="hint_secure_overlay">Pullyをスクリーンショット、画面録画、画面共有に表示しないようにします。</string>
 </resources>

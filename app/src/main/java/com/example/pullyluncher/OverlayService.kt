@@ -7,10 +7,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -19,6 +21,7 @@ import android.view.View
 import android.view.WindowManager
 import com.example.pullyluncher.data.OverlayPositionPrefs
 import com.example.pullyluncher.data.UiConfigPrefs
+import com.example.pullyluncher.data.UsageHistoryRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,57 +37,66 @@ import kotlin.math.roundToInt
  * ── 2ウィンドウ構成 ────────────────────────────────────────────────────
  *
  *   [touchView] / touch Window
- *     ・サイズ: ボール直径のみ（buttonRadiusPx × 2.4 の正方形）
- *     ・フラグ: FLAG_NOT_FOCUSABLE（タッチ可能）
+ *     ・サイズ: ボール直径のみ
+ *     ・フラグ: FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL
  *     ・役割: タッチイベントの受付のみ。描画なし。
- *     ・ボールが移動すると windowManager.updateViewLayout でリアルタイム追従。
+ *     ・非表示時は FLAG_NOT_TOUCHABLE を追加してタッチを完全に透過させる。
  *
  *   [drawView] / draw Window
  *     ・サイズ: MATCH_PARENT（全画面）
  *     ・フラグ: FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCHABLE | FLAG_LAYOUT_IN_SCREEN
  *     ・役割: ボール・ブロブ・ノードの描画のみ。タッチを一切受け取らない。
- *     ・座標は touchView.centerX / touchView.centerY を参照して描く。
  *
- * ── 座標の基準 ─────────────────────────────────────────────────────────
- *   touch Window の中心座標 (savedCenterX, savedCenterY) が唯一の真実。
- *   draw Window はその座標を touchView 参照経由で読み、画面全体に描画する。
+ * ── 前面アプリ検知 ────────────────────────────────────────────────────
+ *   UsageStatsManager.queryEvents() を 750ms ポーリングで使用。
+ *   対応イベント: MOVE_TO_FOREGROUND (API 26+), ACTIVITY_RESUMED (API 29+)
+ *   権限なし・画面消灯中・同一パッケージ時はスキップ。
  */
 class OverlayService : Service() {
 
     private lateinit var windowManager: WindowManager
+    private lateinit var powerManager: PowerManager
     private var touchView: OverlayTouchView? = null
     private var drawView: OverlayExpandView? = null
 
-    /** touch Window の LayoutParams。移動時に updateViewLayout で更新する。 */
+    /** touch Window の LayoutParams。移動・リサイズ・フラグ変更時に updateViewLayout で使う。 */
     private var touchParams: WindowManager.LayoutParams? = null
+    /** draw Window の LayoutParams。FLAG_SECURE 変更時に updateViewLayout で使う。 */
+    private var drawParams: WindowManager.LayoutParams? = null
     /** touch Window のサイズ（正方形の一辺）。 */
     private var touchWindowSize = 0
 
-    /** ボール位置を保存し、View 再生成時に復元する */
     private var savedCenterX = 0f
     private var savedCenterY = 0f
 
     @Suppress("DEPRECATION")
     private var vibrator: Vibrator? = null
 
-    /**
-     * ダブルタップによる一時非表示の状態フラグ。
-     * true の間は applyBallVisibility が必ず hideOverlay を呼ぶ。
-     * temporaryHideJob の完了時に false に戻り、applyBallVisibility で再判定する。
-     */
     private var isTemporarilyHidden = false
     private var temporaryHideJob: Job? = null
 
     private val serviceScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
 
+    // ── ポーリング状態 ────────────────────────────────────────────
+    /** 前回ポーリングで検出したパッケージ名。同一なら queryEvents をスキップ。 */
+    private var lastPolledPkg: String? = null
+    /** 前回確認した Usage Access 権限状態。 */
+    private var lastPolledHasPermission: Boolean? = null
+
+    // ── ログ差分検出 ─────────────────────────────────────────────
+    private var lastLogPkg: String? = null
+    private var lastLogIsHidden: Boolean? = null
+    private var lastLogHasPermission: Boolean? = null
+
     companion object {
         var isRunning: Boolean = false
             private set
 
-        private const val CHANNEL_ID      = "pully_overlay_channel"
-        private const val NOTIF_ID        = 1001
-        /** フェードアニメーションの長さ（ミリ秒）。調整可能。 */
-        private const val FADE_DURATION_MS = 150L
+        private const val CHANNEL_ID               = "pully_overlay_channel"
+        private const val NOTIF_ID                 = 1001
+        private const val FADE_DURATION_MS         = 150L
+        /** UsageStats 前面アプリポーリング間隔（ミリ秒）。 */
+        private const val FOREGROUND_POLL_INTERVAL_MS = 750L
     }
 
     // ── ライフサイクル ────────────────────────────────────────────
@@ -101,6 +113,7 @@ class OverlayService : Service() {
         super.onCreate()
         isRunning = true
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        powerManager  = getSystemService(Context.POWER_SERVICE) as PowerManager
 
         @Suppress("DEPRECATION")
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
@@ -108,8 +121,6 @@ class OverlayService : Service() {
         LauncherRepository.config = UiConfigPrefs.load(this)
         LauncherRepository.loadAppsIfNeeded(this)
 
-        // 初期ボール位置: 左上から 16dp・200dp の位置をデフォルトとし、
-        // 保存済み位置があればそちらを優先して復元する。
         val density  = resources.displayMetrics.density
         val r        = LauncherRepository.config.buttonRadiusPx
         val defaultX = (16 * density) + r
@@ -122,17 +133,15 @@ class OverlayService : Service() {
             LauncherRepository.configFlow.collect { onConfigUpdated() }
         }
 
-        // アクセシビリティサービスのイベント漏れを補完するポーリング（300ms 間隔）
-        // hiddenPackages によるオーバーレイ非表示が確実に反映されるようにする
+        LauncherRepository.onIconsLoaded = { drawView?.invalidate() }
+
+        // UsageStats 前面アプリポーリング（750ms 間隔）
         serviceScope.launch {
             while (true) {
-                delay(300L)
-                applyBallVisibility()
+                delay(FOREGROUND_POLL_INTERVAL_MS)
+                pollForegroundPackage()
             }
         }
-
-        LauncherRepository.onForegroundChanged = { applyBallVisibility() }
-        LauncherRepository.onIconsLoaded       = { drawView?.invalidate() }
 
         startForegroundWithNotification()
         addOverlayViews()
@@ -141,48 +150,90 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
-        LauncherRepository.onForegroundChanged = null
-        LauncherRepository.onIconsLoaded       = null
+        LauncherRepository.onIconsLoaded = null
         serviceScope.cancel()
         removeOverlayViews()
+    }
+
+    // ── 前面アプリポーリング ──────────────────────────────────────
+
+    /**
+     * UsageStats queryEvents() で前面アプリを取得し、LauncherRepository を更新する。
+     *
+     * スキップ条件:
+     *   ・画面消灯中（isInteractive=false）
+     *   ・Usage Access 権限なし（permission=false）
+     *   ・前回と同一パッケージ（変化なし）
+     */
+    private fun pollForegroundPackage() {
+        if (!powerManager.isInteractive) return
+
+        val hasPermission = UsageHistoryRepository.hasPermission(applicationContext)
+        val permChanged   = hasPermission != lastPolledHasPermission
+        lastPolledHasPermission = hasPermission
+
+        if (!hasPermission) {
+            if (permChanged) {
+                // 権限が失われた — 前面パッケージをクリア
+                LauncherRepository.currentForegroundPackage = null
+                lastPolledPkg = null
+                applyBallVisibility()
+            }
+            return
+        }
+
+        val pkg = UsageHistoryRepository.getForegroundPackageFromEvents(applicationContext)
+
+        if (pkg == null) {
+            // 直近 10 秒に有効なイベントなし — 既存の状態を保持
+            if (permChanged) applyBallVisibility()
+            return
+        }
+
+        // 同一パッケージかつ権限変化もなし → スキップ
+        if (pkg == lastPolledPkg && !permChanged) return
+
+        lastPolledPkg = pkg
+        LauncherRepository.currentForegroundPackage = pkg
+        applyBallVisibility()
     }
 
     // ── 2ウィンドウ管理 ──────────────────────────────────────────
 
     private fun addOverlayViews() {
-        val cfg = LauncherRepository.config
+        val cfg        = LauncherRepository.config
+        val secureFlag = if (cfg.secureOverlay) WindowManager.LayoutParams.FLAG_SECURE else 0
 
         // ── draw Window（全画面・FLAG_NOT_TOUCHABLE）──────────────────
         val draw = OverlayExpandView(this)
-        val drawParams = WindowManager.LayoutParams(
+        val dParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    secureFlag,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
         }
-        drawView = draw
-        windowManager.addView(draw, drawParams)
+        drawView   = draw
+        drawParams = dParams
+        windowManager.addView(draw, dParams)
 
         // ── touch Window（ボールサイズ・タッチ可能）──────────────────
-        // 視覚ボール半径と完全一致させる（倍率なし）
         val touchRadius = cfg.buttonRadiusPx
-        val size = (touchRadius * 2f).roundToInt()
+        val size        = (touchRadius * 2f).roundToInt()
         touchWindowSize = size
 
-        val touch = OverlayTouchView(this, savedCenterX, savedCenterY)
+        val touch   = OverlayTouchView(this, savedCenterX, savedCenterY)
         val tParams = WindowManager.LayoutParams(
             size, size,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            // FLAG_NOT_TOUCH_MODAL: ボール外のタッチを後ろのウィンドウへ透過させる。
-            // これがないと、円形ヒットテストで return false しても
-            // 他アプリのポップアップ等がタッチを受け取れない。
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    secureFlag,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -191,7 +242,6 @@ class OverlayService : Service() {
         }
         touchParams = tParams
 
-        // コールバック配線
         touch.onBallMoved = { cx, cy ->
             savedCenterX = cx
             savedCenterY = cy
@@ -201,12 +251,9 @@ class OverlayService : Service() {
         touch.onPositionChanged = { cx, cy ->
             savedCenterX = cx
             savedCenterY = cy
-            // 指を離したタイミングで位置を永続化する（移動中は保存しない）
             OverlayPositionPrefs.save(applicationContext, cx, cy)
         }
         touch.onMoveStateChanged = { _ ->
-            // touchState はコールバック発火前に更新済みなので
-            // getCurrentVisualRadius() が常に遷移後の正しい半径を返す
             resizeTouchWindow(touch.getCurrentVisualRadius())
         }
         touch.onGoHome                 = { goHome() }
@@ -215,47 +262,43 @@ class OverlayService : Service() {
         touch.onDrawInvalidate         = { draw.invalidate() }
         touch.onDoubleTapTemporaryHide = { temporarilyHideOverlay() }
 
-        // draw View に touch View を渡す（onDraw 内で状態を読む）
         draw.touchView = touch
-
-        touchView = touch
+        touchView      = touch
         windowManager.addView(touch, tParams)
 
         applyBallVisibility()
     }
 
     private fun removeOverlayViews() {
-        // draw Window を先に外す（touch Window への参照を切るため）
         drawView?.let {
             it.touchView = null
             try { windowManager.removeView(it) } catch (_: Exception) {}
         }
-        drawView = null
+        drawView   = null
+        drawParams = null
 
         touchView?.let {
             try { windowManager.removeView(it) } catch (_: Exception) {}
         }
-        touchView = null
+        touchView   = null
         touchParams = null
     }
 
     /** touch Window の位置をボール中心に合わせる。 */
     private fun moveTouchWindow(cx: Float, cy: Float) {
         val params = touchParams ?: return
-        val half = touchWindowSize / 2f
-        params.x = (cx - half).roundToInt()
-        params.y = (cy - half).roundToInt()
-        try {
-            touchView?.let { windowManager.updateViewLayout(it, params) }
-        } catch (_: Exception) {}
+        val half   = touchWindowSize / 2f
+        params.x   = (cx - half).roundToInt()
+        params.y   = (cy - half).roundToInt()
+        try { touchView?.let { windowManager.updateViewLayout(it, params) } } catch (_: Exception) {}
     }
 
     /**
      * touch Window のサイズを視覚ボール半径に合わせてリサイズする。
-     * MOVING 開始/終了時に呼ばれる。位置も同時に更新して中心がズレないようにする。
+     * MOVING 開始/終了時に呼ばれる。
      */
     private fun resizeTouchWindow(radius: Float) {
-        val params = touchParams ?: return
+        val params  = touchParams ?: return
         val newSize = (radius * 2f).roundToInt()
         if (touchWindowSize == newSize) return
         touchWindowSize = newSize
@@ -263,46 +306,43 @@ class OverlayService : Service() {
         params.height = newSize
         params.x = (savedCenterX - radius).roundToInt()
         params.y = (savedCenterY - radius).roundToInt()
-        try {
-            touchView?.let { windowManager.updateViewLayout(it, params) }
-        } catch (_: Exception) {}
+        try { touchView?.let { windowManager.updateViewLayout(it, params) } } catch (_: Exception) {}
     }
 
     // ── ボール可視制御 ─────────────────────────────────────────────
 
     /**
-     * 現在の前面アプリだけで表示/非表示を毎回決定する。
-     * 状態フラグを持たず、常に上書き設定することで「前の状態を引きずる」バグを防ぐ。
-     *
-     * currentForegroundPackage は ForegroundAppService が即時更新する。
-     * refreshHistoryAsync による遅延上書きは LauncherRepository 側で禁止済み。
+     * 現在の前面アプリと hiddenPackages を照合して表示/非表示を決定する。
+     * isTemporarilyHidden が true の場合は常に非表示を維持する。
      */
     private fun applyBallVisibility() {
-        // ① 一時非表示中は hiddenPackages 判定より優先して非表示を維持する。
-        //    タイマー完了後に isTemporarilyHidden = false にしてから再度ここを呼ぶ。
         if (isTemporarilyHidden) {
             hideOverlay()
             return
         }
 
-        // ② hiddenPackages 判定
         val currentPkg  = LauncherRepository.currentForegroundPackage
         val hiddenPkgs  = LauncherRepository.config.hiddenPackages
         val shouldHide  = currentPkg != null && currentPkg in hiddenPkgs
+        val hasAccess   = lastPolledHasPermission ?: false
 
-        Log.d("Pully", "applyBallVisibility: currentPkg=$currentPkg shouldHide=$shouldHide")
+        // PullyVisibility ログ — 状態が変化したときだけ出力
+        val pkgChanged    = currentPkg   != lastLogPkg
+        val hiddenChanged = shouldHide   != lastLogIsHidden
+        val permChanged   = hasAccess    != lastLogHasPermission
+        if (pkgChanged || hiddenChanged || permChanged) {
+            lastLogPkg           = currentPkg
+            lastLogIsHidden      = shouldHide
+            lastLogHasPermission = hasAccess
+            logVisibilityState(currentPkg, hasAccess, hiddenPkgs.size, shouldHide)
+        }
 
         if (shouldHide) hideOverlay() else showOverlay()
     }
 
     /**
      * ダブルタップによる一時非表示。
-     *
-     * ・設定秒数（temporaryHideSeconds）後に isTemporarilyHidden = false にして
-     *   applyBallVisibility() を呼ぶことで再表示可否を判定する。
-     * ・hiddenPackages 対象アプリを開いていれば applyBallVisibility が hideOverlay を選ぶため
-     *   そのまま非表示が継続する。
-     * ・連続ダブルタップ時は既存タイマーをキャンセルして再スタートする。
+     * 設定秒数後に isTemporarilyHidden = false にして再判定する。
      */
     private fun temporarilyHideOverlay() {
         temporaryHideJob?.cancel()
@@ -317,16 +357,20 @@ class OverlayService : Service() {
 
     /**
      * オーバーレイをフェードアウトで非表示にする。
-     * すでに非表示（INVISIBLE）なら何もしない。
-     *
-     * withEndAction 内でアルファ値を再確認することで、
-     * アニメーション途中に showOverlay() が呼ばれた場合でも
-     * 誤って INVISIBLE にセットしてしまう競合を防ぐ。
+     * touch Window に FLAG_NOT_TOUCHABLE を追加して透明なタッチ領域が残らないようにする。
      */
     private fun hideOverlay() {
         if (drawView?.visibility == View.INVISIBLE) return
-        // alpha がすでに 0 なら withEndAction の完了待ち中 → 二重起動しない
         if ((drawView?.alpha ?: 1f) <= 0f) return
+
+        // タッチ領域を完全に無効化（背面アプリのタッチを妨げない）
+        touchParams?.let { params ->
+            val newFlags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            if (params.flags != newFlags) {
+                params.flags = newFlags
+                try { touchView?.let { windowManager.updateViewLayout(it, params) } } catch (_: Exception) {}
+            }
+        }
 
         drawView?.animate()
             ?.alpha(0f)
@@ -344,11 +388,7 @@ class OverlayService : Service() {
 
     /**
      * オーバーレイをフェードインで表示する。
-     * すでに完全表示（VISIBLE かつ alpha == 1f）なら何もしない。
-     *
-     * hideOverlay() のアニメーション途中に呼ばれた場合:
-     *   ・VISIBLE のままなので alpha だけ 0f にリセットせず現在値から継続
-     *   ・animate().alpha(1f) が逆方向アニメーションを上書き開始する
+     * touch Window から FLAG_NOT_TOUCHABLE を除去してタッチを再有効化する。
      */
     private fun showOverlay() {
         if (drawView?.visibility == View.VISIBLE && (drawView?.alpha ?: 0f) >= 1f) return
@@ -361,23 +401,75 @@ class OverlayService : Service() {
             touchView?.alpha = 0f
             touchView?.visibility = View.VISIBLE
         }
+
+        // FLAG_NOT_TOUCHABLE を除去してタッチ受付を復元
+        touchParams?.let { params ->
+            val newFlags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            if (params.flags != newFlags) {
+                params.flags = newFlags
+                try { touchView?.let { windowManager.updateViewLayout(it, params) } } catch (_: Exception) {}
+            }
+        }
+
         drawView?.animate()?.alpha(1f)?.setDuration(FADE_DURATION_MS)
         touchView?.animate()?.alpha(1f)?.setDuration(FADE_DURATION_MS)
     }
 
     /**
-     * configFlow 変化時。
-     * ・buttonRadiusPx が変わった場合に touch Window を新サイズへ即時同期する。
-     *   （resizeTouchWindow は同サイズなら何もしないので冪等）
-     * ・View 自身が configFlow を collect して invalidate() するため、
-     *   描画の再指示はサービス側では不要。
-     * ・hiddenPackages の可視制御のみ applyBallVisibility に委ねる。
+     * configFlow 変化時。buttonRadiusPx 変化 / FLAG_SECURE 切替 / hiddenPackages 変化をすべて処理する。
      */
     private fun onConfigUpdated() {
-        // buttonRadiusPx ではなく、現在の状態（IDLE/MOVING）込みの正確な半径を使う。
-        // MOVING 中にサイズ設定を変更した場合も正しくリサイズされる。
         touchView?.let { resizeTouchWindow(it.getCurrentVisualRadius()) }
+        applySecureOverlay()
         applyBallVisibility()
+    }
+
+    // ── FLAG_SECURE 適用 ─────────────────────────────────────────
+
+    /**
+     * secureOverlay 設定に従い drawView / touchView 両 Window の FLAG_SECURE を即時切替する。
+     * Service 再起動不要。updateViewLayout で既存 Window を更新する。
+     */
+    private fun applySecureOverlay() {
+        val secure = LauncherRepository.config.secureOverlay
+        val flag   = WindowManager.LayoutParams.FLAG_SECURE
+
+        drawParams?.let { params ->
+            val newFlags = if (secure) params.flags or flag else params.flags and flag.inv()
+            if (params.flags == newFlags) return@let
+            params.flags = newFlags
+            try { drawView?.let { windowManager.updateViewLayout(it, params) } } catch (_: Exception) {}
+        }
+        touchParams?.let { params ->
+            val newFlags = if (secure) params.flags or flag else params.flags and flag.inv()
+            if (params.flags == newFlags) return@let
+            params.flags = newFlags
+            try { touchView?.let { windowManager.updateViewLayout(it, params) } } catch (_: Exception) {}
+        }
+    }
+
+    // ── PullyVisibility ログ ──────────────────────────────────────
+
+    private fun logVisibilityState(
+        pkg: String?,
+        usageAccess: Boolean,
+        hiddenCount: Int,
+        isHidden: Boolean
+    ) {
+        if (0 == (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)) return
+        val drawVis  = visibilityStr(drawView?.visibility)
+        val touchVis = visibilityStr(touchView?.visibility)
+        val result   = if (isHidden) "HIDE" else "SHOW"
+        Log.d("PullyVisibility",
+            "usageAccess=$usageAccess foregroundPackage=$pkg hiddenCount=$hiddenCount " +
+            "isHidden=$isHidden drawVisibility=$drawVis touchVisibility=$touchVis result=$result")
+    }
+
+    private fun visibilityStr(vis: Int?) = when (vis) {
+        View.VISIBLE   -> "VISIBLE"
+        View.INVISIBLE -> "INVISIBLE"
+        null           -> "null"
+        else           -> "unknown($vis)"
     }
 
     // ── アプリ起動 / ホーム ───────────────────────────────────────
@@ -398,14 +490,9 @@ class OverlayService : Service() {
 
     // ── 触覚フィードバック ────────────────────────────────────────
 
-    @Suppress("DEPRECATION")
     private fun performHaptic() {
         val vib = vibrator ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vib.vibrate(VibrationEffect.createOneShot(15, VibrationEffect.DEFAULT_AMPLITUDE))
-        } else {
-            vib.vibrate(15)
-        }
+        vib.vibrate(VibrationEffect.createOneShot(15, VibrationEffect.DEFAULT_AMPLITUDE))
     }
 
     // ── フォアグラウンド通知 ──────────────────────────────────────

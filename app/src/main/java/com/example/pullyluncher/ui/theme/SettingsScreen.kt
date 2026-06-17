@@ -2,7 +2,6 @@ package com.example.pullyluncher.ui.theme
 
 import android.content.Intent
 import android.provider.Settings
-import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +16,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
@@ -31,7 +31,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.example.pullyluncher.ForegroundAppService
 import com.example.pullyluncher.LauncherRepository
 import com.example.pullyluncher.R
 import com.example.pullyluncher.data.UsageHistoryRepository
@@ -347,38 +346,6 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // ---- フォアグラウンド検知 / Foreground Detection ----
-        SettingSection(title = stringResource(R.string.section_foreground_detection))
-
-        val isFgServiceEnabled = isForegroundServiceEnabled(context)
-        if (isFgServiceEnabled) {
-            Text(
-                text  = stringResource(R.string.foreground_detection_enabled),
-                color = Color(0xFF88C0D0),
-                style = MaterialTheme.typography.bodySmall
-            )
-        } else {
-            Text(
-                text  = stringResource(R.string.foreground_detection_disabled),
-                color = Color(0xFF81A1C1),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                    )
-                }
-            ) {
-                Text(stringResource(R.string.open_accessibility_settings))
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
         // ---- フローティング / Floating ----
         SettingSection(title = stringResource(R.string.section_floating))
 
@@ -455,6 +422,32 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(stringResource(R.string.add_hidden_app), color = Color(0xFF88C0D0))
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ---- スクリーンショット除外 / Screenshot Exclusion ----
+        SettingSection(title = stringResource(R.string.section_secure_overlay))
+
+        Text(
+            text  = stringResource(R.string.hint_secure_overlay),
+            color = Color(0xFF81A1C1),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier          = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text     = stringResource(R.string.setting_secure_overlay),
+                color    = Color.White,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked         = config.secureOverlay,
+                onCheckedChange = { onConfigChange(config.copy(secureOverlay = it)) }
+            )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -623,21 +616,3 @@ private fun SettingSlider(
     }
 }
 
-// ── アクセシビリティサービス有効確認 ─────────────────────────────
-
-/**
- * ForegroundAppService が現在有効になっているか Settings.Secure で確認する。
- * ForegroundAppService.isRunning はプロセス再起動時にリセットされるため、
- * OS の設定値を直接確認する方が信頼性が高い。
- */
-private fun isForegroundServiceEnabled(context: android.content.Context): Boolean {
-    val am = context.getSystemService(android.content.Context.ACCESSIBILITY_SERVICE)
-            as? AccessibilityManager ?: return false
-    if (!am.isEnabled) return false
-    val flat = Settings.Secure.getString(
-        context.contentResolver,
-        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-    ) ?: return false
-    val target = "${context.packageName}/com.example.pullyluncher.ForegroundAppService"
-    return flat.split(":").any { it.equals(target, ignoreCase = true) }
-}

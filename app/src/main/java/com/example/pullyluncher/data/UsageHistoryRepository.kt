@@ -1,6 +1,7 @@
 package com.example.pullyluncher.data
 
 import android.app.AppOpsManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.os.Process
@@ -13,6 +14,10 @@ import com.example.pullyluncher.model.AppEntry
  * 未付与であればラベルのアルファベット順で返す。
  */
 object UsageHistoryRepository {
+
+    // ACTIVITY_RESUMED = 19 (API 29+) — 生の値を使い @RequiresApi のlint警告を回避
+    private const val ACTIVITY_RESUMED_INT = 19
+    private val IGNORED_PACKAGES = setOf("com.android.systemui", "android")
 
     /**
      * インストール済みランチャーアプリを最近使った順（または ABC 順）で返す。
@@ -57,19 +62,33 @@ object UsageHistoryRepository {
     }
 
     /**
-     * 現在フォアグラウンドにあるアプリの packageName を返す。
-     * 権限がなければ null を返す。IO スレッドで呼ぶこと。
+     * queryEvents() で現在フォアグラウンドにあるアプリの packageName を返す。
+     * 対応イベント: MOVE_TO_FOREGROUND (API 26+), ACTIVITY_RESUMED (API 29+)
+     * 直近 10 秒のイベントを走査し、最も新しいフォアグラウンド遷移を返す。
+     * 権限がない、またはイベントが存在しない場合は null を返す。
      */
-    fun getForegroundPackage(context: Context): String? {
+    fun getForegroundPackageFromEvents(context: Context): String? {
         if (!hasPermission(context)) return null
         return try {
-            val usm   = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-            val now   = System.currentTimeMillis()
-            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 10_000L, now)
-                ?: return null
-            stats.filter { it.lastTimeUsed > 0L }
-                 .maxByOrNull { it.lastTimeUsed }
-                 ?.packageName
+            val usm  = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+            val now  = System.currentTimeMillis()
+            val past = now - 10_000L
+            val events = usm.queryEvents(past, now) ?: return null
+            val event = UsageEvents.Event()
+            var latestPkg: String? = null
+            var latestTime = 0L
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.packageName == context.packageName) continue
+                if (event.packageName in IGNORED_PACKAGES) continue
+                val isFg = event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                           event.eventType == ACTIVITY_RESUMED_INT
+                if (isFg && event.timeStamp > latestTime) {
+                    latestTime = event.timeStamp
+                    latestPkg = event.packageName
+                }
+            }
+            latestPkg
         } catch (_: Exception) { null }
     }
 
