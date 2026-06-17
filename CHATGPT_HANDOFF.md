@@ -1,7 +1,7 @@
 # PullyLauncher-V1-Windows — ChatGPT Handoff
 
 > Branch: `fix/v1-hidden-apps-secure-overlay`
-> HEAD: `22edc98` (pushed to origin)
+> HEAD: `(uncommitted — settings screen UI improvements, see section 6-A)` ← 次コミット後に更新
 > Base: `origin/recovery/mac-latest-20260617`
 > Date: 2026-06-17
 > Status: **BUILD SUCCESSFUL, LINT CLEAN — Galaxy device testing pending**
@@ -29,7 +29,9 @@ $env:JAVA_HOME = "C:\Users\Ryon\AppData\Local\Programs\Android Studio\jbr"
 ## 2. Full Commit Log (This Branch)
 
 ```
-22edc98 feat: revolver-specific settings, X-axis speed, chevron pointer, arc guide, settings preview  ← HEAD
+6b74aa3 feat: redesign settings screen — Pull/Revolver tabs, SliderSettingCard, previews, feature grid  ← HEAD
+cf9fd06 docs: update handoff for 22edc98
+22edc98 feat: revolver-specific settings, X-axis speed, chevron pointer, arc guide, settings preview
 601e6c2 feat: refine V2 revolver UX — speed, snap, arc layout, double-tap-hold move
 979fb91 docs: update handoff with V2 revolver architecture and test checklist
 f24e487 feat: implement V2 revolver menu with long-press pinned apps ring
@@ -97,27 +99,43 @@ val speedFactor = (REVOLVER_SPEED_NEAR + (REVOLVER_SPEED_FAR - REVOLVER_SPEED_NE
 
 旧定数 `REVOLVER_SPEED_MULTIPLIER = 0.6f` は削除（`cfg.revolverSpeedScale` に置換）。
 
-### 4-2. 山括弧ポインター（円形選択枠の代替）
+### 4-2. 山括弧ポインター（OverlayExpandView / 設定プレビュー）
 
-選択位置のさらに外側に V 字形のポインターを 2 本線で描画:
+**オーバーレイ実装 (OverlayExpandView):** アイコン外側に V 字形ポインター（先端がアイコン外側に向く、シェブロンが外開き）
 
-```kotlin
-val ptrOffset = selectedNodeRadius + 6f        // アイコン端から 6px 外
-val tipX = selX + cos(selectorAngleRad) * ptrOffset
-val tipY = selY + sin(selectorAngleRad) * ptrOffset
-val armLen  = revolverNodeRadius * 0.72f
-val armHalf = revolverNodeRadius * 0.54f
-val perpCos = -sin(selectorAngleRad)
-val perpSin =  cos(selectorAngleRad)
-// arm1/arm2 を計算して2本の線を描画。strokeCap = ROUND
+**設定プレビュー (SettingsScreen RevolverPreview — 本コミットで修正):** オーバーレイと同じロジックを使用するよう変更。先端はアイコン外側。
+
+```
+RIGHT 位置の場合:
+  Pully → ● (選択アイコン) → < (ポインター先端)
+                                 \  (腕2本が外開き)
 ```
 
-| SelectorPosition | ポインター向き | イメージ |
-|-----------------|-------------|---------|
-| RIGHT | 先端が左（アイコンを指す） | 〈 |
-| LEFT  | 先端が右 | 〉 |
-| TOP   | 先端が下 | ∨ |
-| BOTTOM | 先端が上 | ∧ |
+設定プレビューの計算（`drawPinnedRevolver` と完全一致）:
+```kotlin
+val selItemX = cx + cos(selAngleRad) * sRR       // 選択アイコム中心
+val selItemY = cy + sin(selAngleRad) * sRR
+val selDrawRadius = sNR * 1.18f
+val ptrOffset = selDrawRadius + 6f * scale        // アイコン外側のオフセット
+val tipX = selItemX + cos(selAngleRad) * ptrOffset  // 先端 = アイコン外側
+val tipY = selItemY + sin(selAngleRad) * ptrOffset
+val armLen  = sNR * 0.72f
+val armHalf = sNR * 0.54f
+val perpCos = -sin(selAngleRad)
+val perpSin =  cos(selAngleRad)
+// arm1 / arm2 は先端から外側方向＋垂直方向に延びる → 外開きシェブロン
+nc.drawLine(tipX, tipY, arm1X, arm1Y, ptrPaint)
+nc.drawLine(tipX, tipY, arm2X, arm2Y, ptrPaint)
+```
+
+| SelectorPosition | OverlayExpandView ポインター | 設定プレビュー ポインター |
+|-----------------|---------------------------|----------------------|
+| RIGHT | アイコン右外側に 〈 (外開き) | 同じ（統一済み） |
+| LEFT  | アイコン左外側に 〉 | 同じ |
+| TOP   | アイコン上外側に ∨ | 同じ |
+| BOTTOM | アイコン下外側に ∧ | 同じ |
+
+> **6b74aa3 時点の実装**: 設定プレビューのポインターは Pully とアイコンの間に配置（内側）で **オーバーレイと異なっていた**。本コミットで修正済み。
 
 ### 4-3. アークガイド
 
@@ -181,28 +199,197 @@ Pull 側の設定（nodeRadiusPx, spacingPx 等）には一切影響しない。
 
 ---
 
-## 6. 設定画面の構成（22edc98 以降）
+## 6. 設定画面の構成（6b74aa3 → 本コミット — UI 改善）
+
+ファイル: `app/src/main/java/com/example/pullyluncher/ui/theme/SettingsScreen.kt`
+
+### 6-A. 本コミットの変更内容（2026-06-17）
+
+変更ファイル: `SettingsScreen.kt` のみ。V1 Pull ロジック / V2 Revolver ロジック / overlay / UiConfig に変更なし。
+
+#### 1. プレビューの固定（スクロール外）
+
+**変更前:** `Column(verticalScroll) { プレビュー; 設定リスト }` — プレビューがスクロールで消える  
+**変更後:** `Column(fillMaxSize) { プレビュー(固定); Column(weight(1f).verticalScroll) { 設定リスト } }`
+
+両ページとも同様のレイアウト構造に統一。
+
+#### 2. Pull プレビュー — buildBlobPath の数式を再現
+
+`PullPreviewCard` の描画を `OverlayExpandView.buildBlobPath` と同じベジェ曲線で実装。
+
+```kotlin
+// tipHalf = r * 0.98f, k = 0.5523f, kr = r*k, tipK = tipHalf*k
+// 方向: 右向き (rdx=1, rdy=0)
+moveTo(cx, cy - r)
+cubicTo(cx-kr, cy-r,    cx-r, cy-kr,   cx-r, cy)                      // 左円弧
+cubicTo(cx-r, cy+kr,    cx-kr, cy+r,   cx, cy+r)                      // 右円弧下半
+cubicTo(cx+blobLen*0.72f, cy+r, cx+blobLen*0.92f, cy+tipHalf, cx+blobLen, cy+tipHalf) // 下テーパー
+cubicTo(cx+blobLen+tipK, cy+tipHalf, cx+blobLen+tipHalf, cy+tipK, cx+blobLen+tipHalf, cy) // 先端
+cubicTo(cx+blobLen+tipHalf, cy-tipK, cx+blobLen+tipK, cy-tipHalf, cx+blobLen, cy-tipHalf) // 先端上
+cubicTo(cx+blobLen*0.92f, cy-tipHalf, cx+blobLen*0.72f, cy-r, cx, cy-r)  // 上テーパー戻り
+close()
+```
+
+ボール描画: `drawIdleBall` の RadialGradient ハイライト込み。  
+ブロブ塗り: LinearGradient (buttonColor 100% → 84% → 50%)。
+
+#### 3. Revolver プレビュー ポインター修正
+
+`drawPinnedRevolver` と完全一致するロジックに変更。先端がアイコン外側。詳細は Section 4-2。
+
+#### 4. SliderSettingCard — スリムスライダー
+
+M3 1.3.0 の `Slider(thumb = ..., track = ...)` カスタムラムダを使用。  
+`@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)` をファイル先頭に追加。
+
+```kotlin
+thumb = {
+    Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+        Spacer(Modifier.size(14.dp).background(AccentColor, CircleShape))  // 14dp 視覚サイズ
+    }
+}
+track = { state ->
+    val fraction = ((state.value - state.valueRange.start) /
+                   (state.valueRange.endInclusive - state.valueRange.start)).coerceIn(0f, 1f)
+    Box(Modifier.fillMaxWidth().height(2.dp)) {  // 2dp トラック高さ
+        Box(Modifier.fillMaxSize().background(Color(0xFF1E2A3A), RoundedCornerShape(1.dp)))
+        Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().background(AccentColor, RoundedCornerShape(1.dp)))
+    }
+}
+```
+
+#### 5. FeatureGrid → FeatureList（グループ化リスト）
+
+**変更前:** 3×2 アイコングリッド（意味不明瞭）  
+**変更後:** カード内リスト、3グループ（アプリ管理 / 表示と動作 / その他）
+
+各アイテムに:
+- ラベル（太字）
+- サブタイトル（説明文）
+- 末尾に `›` シェブロン
+
+#### 6. AppPickerDialog — アイコン・検索・複数選択
+
+```kotlin
+@Composable
+private fun AppPickerDialog(
+    allApps: List<AppEntry>,
+    excluded: Set<String> = emptySet(),       // シングル選択: 除外（グレーアウト）
+    initialSelected: Set<String> = emptySet(), // マルチ選択: 初期チェック状態
+    multiSelect: Boolean = false,
+    onSelect: (AppEntry) -> Unit = {},         // シングル選択コールバック
+    onConfirm: (Set<String>) -> Unit = {},     // マルチ選択確定コールバック
+    onDismiss: () -> Unit
+)
+```
+
+新機能:
+- **アイコン表示**: `cc.nativeCanvas.drawBitmap(iconBmp, null, RectF(...), null)` — 既存インポートのみ使用
+- **検索**: `BasicTextField` + `remember(allApps, query) { filter }` — リアルタイムフィルタ
+- **複数選択**: `var selected by remember { mutableStateOf(initialSelected) }` → Checkbox + 選択数表示 + 「完了」ボタン
+- **除外アプリ**: `excluded` セットに含まれるアプリはグレーアウト + 「使用中」ラベル（シングル選択時のみ）
+
+マルチ選択の保存フロー（非表示アプリ）:
+```
+HiddenAppsDialogContent
+  → AppPickerDialog(multiSelect=true, initialSelected=config.hiddenPackages.toSet())
+  → onConfirm { selected: Set<String> →
+      onConfigChange(config.copy(hiddenPackages = selected.toList()))
+      onDismiss()
+    }
+```
+
+#### 7. PinnedAppRow — アイコン表示追加
+
+`PinnedAppRow` の先頭に 32dp アイコン枠を追加。同じ Canvas drawBitmap アプローチ。
+
+---
+
+### 6-B. 画面レイアウト（現在）
 
 ```
-[リボルバープレビュー]  ← 展開状態を即時反映で表示
-
-[Pull メニュー]
-  メインボールサイズ / アプリアイコンサイズ / アプリ間隔 / ボール透明度
-  最初のアプリ距離 / 引っ張り開始距離 / キャンセルしやすさ / 表示アプリ数 / 一時非表示秒数
-
-[リボルバーメニュー]
-  リボルバーの直径 / 回転速度 (n%) / アイコンサイズ / アプリ間隔 / 選択位置
-
-[カラー] / [外観] / [固定アプリ] / [非表示アプリ] / [撮影モード] / [使用履歴] / [フローティング]
+[ヘッダーバー: "Pully Launcher"  [Close]]
+[タブストリップ:  PULL  |  REVOLVER  ]  ← タップまたはスワイプで切替 (固定)
+[HorizontalPager]
+  Page 0 — PULL
+    ─── 固定（スクロール外）───
+    [PullPreviewCard: 200dp]    ← Canvas: buildBlobPath 数式 + RadialGradient ボール
+    ─── スクロール可能 ─────────
+    [基本設定]
+      ボールサイズ / アイコンサイズ / 間隔 / ボール透明度
+    [挙動設定]
+      最初のアプリ距離 / 引っ張り距離 / キャンセル / アプリ数 / 非表示秒数
+    [Pull設定をリセット]
+    [関連機能リスト]
+  Page 1 — REVOLVER
+    ─── 固定（スクロール外）───
+    [RevolverPreview: 210dp]    ← Canvas: 外開きポインター (オーバーレイと一致)
+    "長押しで Revolver を起動 / 上下スワイプで回転"
+    ─── スクロール可能 ─────────
+    [基本設定]
+      直径 / 速度 / アイコンサイズ / アーク間隔
+    [選択位置]             ← 4ボタン選択 (上/右/下/左)
+    [詳細設定 ▼]          ← 折りたたみ: エッジの濃さ / 背景の明るさ
+    [Revolver設定をリセット]
+    [関連機能リスト]
 ```
 
-**プレビューの実装:**
-- `@Composable RevolverPreview` in `SettingsScreen.kt`
-- `androidx.compose.foundation.Canvas` + `drawIntoCanvas { canvas.nativeCanvas }` でネイティブ Android Canvas API
-- `config` 変更 → Compose recomposition → 即時再描画
-- スケール: `avail = min(pw,ph)/2 * 0.84`, `scale = avail / (rRadius + nRadius*2.5 + 20)`
-- 固定アプリ登録済みの場合 `LauncherRepository.iconBitmaps` から実アイコン表示
-- 固定アプリなしの場合 4 個のダミーノード
+### 6-C. 関連機能リスト（全ページ共通）
+
+グループ「アプリ管理」:
+- ★ 固定アプリ — 「Revolver に表示するアプリを最大8件登録」
+- ◎ 非表示アプリ — 「特定アプリ起動中に Pully を隠す」
+
+グループ「表示と動作」:
+- ● 配色テーマ — 「ボールとノードのカラーを変更」
+- ▶ 撮影モード — 「スクリーン録画中 Pully を完全非表示」
+
+グループ「その他」:
+- ↑ 使用履歴 — 「最近使ったアプリを優先表示（権限が必要）」
+- ⚙ 権限と起動 — 「オーバーレイ権限の確認と Pully の起動・停止」
+
+### 6-D. 共通コンポーネント
+
+**`SliderSettingCard`**: `Card { label + [−][DragNumberField][+] + hint + Slider(14dp thumb, 2dp track) }`
+
+**`DragNumberField`**: タップ→編集 / 水平ドラッグ→値変更 / ハプティクス 4 ステップごと
+
+**`SelectorPositionCard`**: 4 方向ボタン（選択中はアクセントカラー枠）
+
+**`AppPickerDialog`**: アイコン(Canvas) + 検索(BasicTextField) + Checkbox(multi) + 選択数 + 完了ボタン
+
+### 6-E. デザイントークン
+
+```kotlin
+private val BgColor       = Color(0xFF0C1018)  // 最背景
+private val CardColor     = Color(0xFF141923)  // カード
+private val CardBorderCol = Color(0xFF1E2A3A)  // カード枠
+private val AccentColor   = Color(0xFF88C0D0)  // シアン
+private val HintColor     = Color(0xFF7A9BB0)  // サブテキスト
+private val DangerColor   = Color(0xFFBF5A5A)  // 赤（リセット/削除）
+```
+
+### 6-F. Pull プレビュー描画詳細
+
+```kotlin
+// scale = min(pw*0.9/neededW, ph*0.8/neededH)  フィットスケール
+// cx = pw/2 - totalW/2 + sBR  (コンテンツ水平センタリング)
+// blobLen = sBase + sSpc*(count-1)*0.60f  (60% 引き出し状態)
+// 描画順: blob stroke → blob fill(LinearGradient) → nodes(glow+core) → centerBall → highlight → label
+// 選択ノード = nodeCount / 2 番目  (グロー + 1.12× 拡大)
+```
+
+### 6-G. Galaxy 端末 確認状況
+
+| 機能 | 状態 |
+|------|------|
+| プレビュー固定レイアウト | 未確認 |
+| Pull プレビュー（buildBlobPath 数式） | 未確認 |
+| Revolver ポインター（外開き） | 未確認 |
+| スリムスライダー (14dp/2dp) | 未確認 |
+| 関連機能リスト（グループ表示） | 未確認 |
+| アプリピッカー（アイコン・検索・複数選択） | 未確認 |
 
 ---
 
@@ -212,6 +399,7 @@ Pull 側の設定（nodeRadiusPx, spacingPx 等）には一切影響しない。
 - `nodeRadiusPx`, `spacingPx` は Pull 側の描画のみに使われる
 - `OverlayTouchView` の DRAGGING ステートマシン: 変更なし
 - `OverlayExpandView` の `drawNode`, `drawBlob`, `revealProgress`: 変更なし
+- `LauncherUiConfig.kt` / `UiConfigPrefs.kt` / OverlayService 系: 変更なし
 
 ---
 
@@ -260,10 +448,15 @@ Pull 側の設定（nodeRadiusPx, spacingPx 等）には一切影響しない。
 ## 11. ビルド結果
 
 ```
-22edc98 (V2 設定・描画改良)  — assembleDebug SUCCESSFUL 11s,  lintDebug CLEAN 20s
-601e6c2 (V2 UX 調整)         — assembleDebug SUCCESSFUL 8s,   lintDebug CLEAN 15s
-f24e487 (V2 実装)             — assembleDebug SUCCESSFUL 19s,  lintDebug CLEAN 24s
+(本コミット — 設定UI改善)    — assembleDebug SUCCESSFUL,  lintDebug CLEAN  ← @OptIn(ExperimentalMaterial3Api) 追加で解決
+6b74aa3 (設定画面リデザイン) — assembleDebug SUCCESSFUL,  lintDebug CLEAN
+22edc98 (V2 設定・描画改良)  — assembleDebug SUCCESSFUL,  lintDebug CLEAN
+601e6c2 (V2 UX 調整)         — assembleDebug SUCCESSFUL,  lintDebug CLEAN
+f24e487 (V2 実装)             — assembleDebug SUCCESSFUL,  lintDebug CLEAN
 ```
+
+ビルド注意: `Slider(thumb = ..., track = ...)` の `SliderState` は M3 1.3.0 で `@ExperimentalMaterial3Api`。
+ファイル先頭に `@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)` が必要。
 
 ---
 
@@ -280,6 +473,7 @@ f24e487 (V2 実装)             — assembleDebug SUCCESSFUL 19s,  lintDebug CLE
 - V2 リボルバー実装の全面削除・置換（明示的承認なし） — 禁止
 - Gradle ローカル改変の破棄（AGP 9.0.0 / Gradle 9.1.0） — 禁止
 - 実機未確認項目を PASS と報告する — 禁止
+- SharedPreferences の既存キーを削除する — 禁止
 
 ---
 
@@ -294,11 +488,21 @@ f24e487 (V2 実装)             — assembleDebug SUCCESSFUL 19s,  lintDebug CLE
 - [ ] 速度: Pully と同じ横位置で速い / 横に離れると遅い
 - [ ] 上下移動中に横位置が変わらなければ速度がほぼ変化しない
 - [ ] スナップ抵抗 + 指離し後のスナップアニメーション 120ms
-- [ ] **円形選択枠がない**。山括弧ポインターが表示される
-- [ ] 選択位置 RIGHT → `〈` / LEFT → `〉` / TOP → `∨` / BOTTOM → `∧`
+- [ ] 円形選択枠がない。山括弧ポインターが選択アイコン外側に表示される
 - [ ] 薄いアークガイドが軌道に沿って表示される
 - [ ] 選択中アイコンが拡大・グロー・アプリ名表示
 - [ ] 端アイコンが滑らかにフェードする
+
+### 設定画面 (6b74aa3)
+- [ ] PULL / REVOLVER タブが切替可能（タップ＋スワイプ）
+- [ ] Pull ページ: プレビューにブロブ＋ノード表示
+- [ ] Revolver ページ: プレビューに内側ポインター（Pully と選択アイコンの間）
+- [ ] スライダー変更がプレビューに即時反映
+- [ ] − / + ボタンで1ステップずつ変更
+- [ ] 数値欄を左右ドラッグで連続変更 / タップでキーボード入力
+- [ ] Pull / Revolver リセットボタンがデフォルト値に戻す（確認ダイアログ付き）
+- [ ] 関連機能グリッドのカードが対応ダイアログを開く（固定アプリ / 非表示 / 配色 / 撮影 / 履歴 / 権限）
+- [ ] 詳細設定（折りたたみ）が展開/折りたたみできる
 
 ### リボルバー専用設定
 - [ ] 直径スライダー → リング半径が変化 (1.5〜4.0)
@@ -306,11 +510,6 @@ f24e487 (V2 実装)             — assembleDebug SUCCESSFUL 19s,  lintDebug CLE
 - [ ] アイコンサイズスライダー → Pull 側と独立して変化 (0.5〜1.8)
 - [ ] アプリ間隔スライダー → アーク角が変化 (0.4〜1.8)
 - [ ] 選択位置変更 → 即時反映
-
-### 設定プレビュー
-- [ ] 設定画面上部にリボルバー展開状態のプレビューが表示される
-- [ ] スライダー変更がプレビューに即時反映される
-- [ ] 固定アプリ登録済み → 実アイコン表示 / 未登録 → ダミーノード 4 個
 
 ### ダブルタップホールド
 - [ ] 2回目 250ms ホールド → 振動 + 本体移動
@@ -326,3 +525,4 @@ f24e487 (V2 実装)             — assembleDebug SUCCESSFUL 19s,  lintDebug CLE
 1. Galaxy 実機でチェックリスト確認
 2. デフォルト値の実機確認後に微調整（arcSpacing=1.0=60° が広すぎ/狭すぎる場合など）
 3. プレビューのスケールが端末サイズで正しく収まるか確認
+4. 数値ドラッグの感度（22f px/step）を実機操作感に基づき調整
