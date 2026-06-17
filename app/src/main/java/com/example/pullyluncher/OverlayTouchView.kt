@@ -138,12 +138,6 @@ class OverlayTouchView(
      * Service は設定秒数だけオーバーレイを一時非表示にする。
      */
     var onDoubleTapTemporaryHide: (() -> Unit)? = null
-    /**
-     * DRAGGING 状態の開始 / 終了を通知する。
-     *   true  → ドラッグ開始（draw Window をコンテンツ範囲まで拡張させる）
-     *   false → ドラッグ終了（draw Window をアイドルサイズへ縮小させる）
-     */
-    var onDragStateChanged: ((isDragging: Boolean) -> Unit)? = null
 
     // ── タッチイベント ─────────────────────────────────────────────
 
@@ -207,8 +201,6 @@ class OverlayTouchView(
                         val can = isCancelled
                         resetDragState()
                         touchState = TouchState.IDLE
-                        // draw Window をアイドルサイズへ縮小してから再描画
-                        onDragStateChanged?.invoke(false)
                         onDrawInvalidate?.invoke()
                         if (!can && sel >= 0) {
                             val pkg = appSlots.getOrNull(sel)?.pinnedApp?.packageName
@@ -284,8 +276,6 @@ class OverlayTouchView(
         isCancelled = false
         prevSelectedIndex = -1
         prevCancelled = false
-        // draw Window を先に拡張してから最初の描画を行う
-        onDragStateChanged?.invoke(true)
         internalUpdateDrag(rawX, rawY)
     }
 
