@@ -81,6 +81,8 @@ class OverlayService : Service() {
     private var vibrator: Vibrator? = null
 
     private var temporaryHideJob: Job? = null
+    /** 撮影モード有効化時の 3 秒ディレイ Job。非表示前にキャンセルすれば復帰できる。 */
+    private var captureHideJob: Job? = null
 
     private val serviceScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
 
@@ -118,6 +120,7 @@ class OverlayService : Service() {
         private const val FOREGROUND_POLL_INTERVAL_MS  = 750L
         private const val INITIAL_LOOKBACK_MS          = 60_000L
         private const val POLL_LOOKBACK_MS             = 5_000L
+        private const val CAPTURE_HIDE_DELAY_MS        = 3_000L
 
         const val ACTION_ENABLE_CAPTURE_MODE  = "com.example.pullyluncher.ENABLE_CAPTURE_MODE"
         const val ACTION_DISABLE_CAPTURE_MODE = "com.example.pullyluncher.DISABLE_CAPTURE_MODE"
@@ -131,20 +134,13 @@ class OverlayService : Service() {
         LauncherRepository.loadAppsIfNeeded(this)
         when (intent?.action) {
             ACTION_DISABLE_CAPTURE_MODE -> {
-                val newCfg = LauncherRepository.config.copy(captureMode = false)
-                UiConfigPrefs.save(this, newCfg)
-                LauncherRepository.config = newCfg
-                hiddenReasons = hiddenReasons.copy(captureMode = false)
-                updateOverlayVisibility()
-                updateNotification()
+                // captureMode は永続化しないため save() 不要
+                LauncherRepository.config = LauncherRepository.config.copy(captureMode = false)
+                applyCaptureMode(false)
             }
             ACTION_ENABLE_CAPTURE_MODE -> {
-                val newCfg = LauncherRepository.config.copy(captureMode = true)
-                UiConfigPrefs.save(this, newCfg)
-                LauncherRepository.config = newCfg
-                hiddenReasons = hiddenReasons.copy(captureMode = true)
-                updateOverlayVisibility()
-                updateNotification()
+                LauncherRepository.config = LauncherRepository.config.copy(captureMode = true)
+                applyCaptureMode(true)
             }
             else -> {
                 if (touchView == null) addOverlayViews()
@@ -173,7 +169,7 @@ class OverlayService : Service() {
         savedCenterX = restoredX
         savedCenterY = restoredY
 
-        hiddenReasons = hiddenReasons.copy(captureMode = LauncherRepository.config.captureMode)
+        // captureMode は永続化しないためロード値は常に false。初期化不要。
 
         serviceScope.launch {
             LauncherRepository.configFlow.collect { onConfigUpdated() }
@@ -358,18 +354,15 @@ class OverlayService : Service() {
 
     /**
      * 前面アプリと hiddenPackages を照合して hiddenApp を更新し、
-     * config の captureMode を同期してから updateOverlayVisibility() を呼ぶ。
+     * captureMode の変化を applyCaptureMode() 経由で反映する。
      */
     private fun applyBallVisibility() {
-        val currentPkg     = LauncherRepository.currentForegroundPackage
-        val hiddenPkgs     = LauncherRepository.config.hiddenPackages
-        val newHiddenApp   = currentPkg != null && currentPkg in hiddenPkgs
-        val newCaptureMode = LauncherRepository.config.captureMode
+        val currentPkg   = LauncherRepository.currentForegroundPackage
+        val hiddenPkgs   = LauncherRepository.config.hiddenPackages
+        val newHiddenApp = currentPkg != null && currentPkg in hiddenPkgs
 
-        hiddenReasons = hiddenReasons.copy(
-            hiddenApp   = newHiddenApp,
-            captureMode = newCaptureMode
-        )
+        hiddenReasons = hiddenReasons.copy(hiddenApp = newHiddenApp)
+        applyCaptureMode(LauncherRepository.config.captureMode)
 
         logVisibilityState(currentPkg)
         updateOverlayVisibility()
@@ -384,6 +377,33 @@ class OverlayService : Service() {
             delay(LauncherRepository.config.temporaryHideSeconds * 1000L)
             hiddenReasons = hiddenReasons.copy(temporaryHide = false)
             updateOverlayVisibility()
+        }
+    }
+
+    /**
+     * 撮影モードの ON/OFF を処理する。
+     * ON 時は 3 秒後に hiddenReasons.captureMode = true → applyHide。
+     * OFF 時は即座に captureMode = false → applyShow（他の隠し理由がなければ）。
+     */
+    private fun applyCaptureMode(wantCapture: Boolean) {
+        if (!wantCapture) {
+            captureHideJob?.cancel()
+            captureHideJob = null
+            if (hiddenReasons.captureMode) {
+                hiddenReasons = hiddenReasons.copy(captureMode = false)
+                updateOverlayVisibility()
+                updateNotification()
+            }
+            return
+        }
+        // すでに有効 or ディレイ中なら二重起動しない
+        if (hiddenReasons.captureMode || captureHideJob?.isActive == true) return
+        captureHideJob = serviceScope.launch {
+            delay(CAPTURE_HIDE_DELAY_MS)
+            captureHideJob = null
+            hiddenReasons = hiddenReasons.copy(captureMode = true)
+            updateOverlayVisibility()
+            updateNotification()
         }
     }
 
