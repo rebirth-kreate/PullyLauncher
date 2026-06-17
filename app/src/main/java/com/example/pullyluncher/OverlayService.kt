@@ -63,10 +63,14 @@ class OverlayService : Service() {
 
     /** touch Window の LayoutParams。移動・リサイズ・フラグ変更時に updateViewLayout で使う。 */
     private var touchParams: WindowManager.LayoutParams? = null
-    /** draw Window の LayoutParams。FLAG_SECURE 変更時に updateViewLayout で使う。 */
+    /** draw Window の LayoutParams。FLAG_SECURE・リサイズ変更時に updateViewLayout で使う。 */
     private var drawParams: WindowManager.LayoutParams? = null
     /** touch Window のサイズ（正方形の一辺）。 */
     private var touchWindowSize = 0
+    /** draw Window 左上のスクリーン座標 X（drawView.windowOriginX と常に同期）。 */
+    private var drawOriginX = 0f
+    /** draw Window 左上のスクリーン座標 Y（drawView.windowOriginY と常に同期）。 */
+    private var drawOriginY = 0f
 
     private var savedCenterX = 0f
     private var savedCenterY = 0f
@@ -109,6 +113,8 @@ class OverlayService : Service() {
         private const val INITIAL_LOOKBACK_MS = 60_000L
         /** 通常ポーリング時のルックバック上限（5秒）。大半は lastFgEventTimestampMs で clamp される。 */
         private const val POLL_LOOKBACK_MS    = 5_000L
+        /** アイドル時 draw Window のボール半径外余白（アンチエイリアス + ハイライト吸収）。 */
+        private const val DRAW_IDLE_PADDING_PX = 24f
     }
 
     // ── ライフサイクル ────────────────────────────────────────────
@@ -230,11 +236,20 @@ class OverlayService : Service() {
         val cfg        = LauncherRepository.config
         val secureFlag = if (cfg.secureOverlay) WindowManager.LayoutParams.FLAG_SECURE else 0
 
-        // ── draw Window（全画面・FLAG_NOT_TOUCHABLE）──────────────────
+        // ── draw Window（ボール周辺・FLAG_NOT_TOUCHABLE・FLAG_SECURE のみここへ付与）──
+        // アイドル時はボール半径 × BALL_MOVING_SCALE + 余白の小さい矩形。
+        // ドラッグ展開時は updateDrawWindowToDrag() が拡張する。
         val draw = OverlayExpandView(this)
+        val idleHalfSize = (cfg.buttonRadiusPx * BALL_MOVING_SCALE + DRAW_IDLE_PADDING_PX).roundToInt()
+        val idleSize     = idleHalfSize * 2
+        drawOriginX = savedCenterX - idleHalfSize
+        drawOriginY = savedCenterY - idleHalfSize
+        draw.windowOriginX = drawOriginX
+        draw.windowOriginY = drawOriginY
+
         val dParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+            idleSize,
+            idleSize,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
@@ -243,12 +258,15 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
+            x = drawOriginX.roundToInt()
+            y = drawOriginY.roundToInt()
         }
         drawView   = draw
         drawParams = dParams
         windowManager.addView(draw, dParams)
 
-        // ── touch Window（ボールサイズ・タッチ可能）──────────────────
+        // ── touch Window（ボールサイズ・タッチ可能・FLAG_SECURE 不要）──
+        // touchView は透明で描画内容がないため FLAG_SECURE は不要。
         val touchRadius = cfg.buttonRadiusPx
         val size        = (touchRadius * 2f).roundToInt()
         touchWindowSize = size
@@ -258,8 +276,7 @@ class OverlayService : Service() {
             size, size,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    secureFlag,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -272,6 +289,7 @@ class OverlayService : Service() {
             savedCenterX = cx
             savedCenterY = cy
             moveTouchWindow(cx, cy)
+            updateDrawWindowToIdle()
             draw.invalidate()
         }
         touch.onPositionChanged = { cx, cy ->
@@ -281,6 +299,9 @@ class OverlayService : Service() {
         }
         touch.onMoveStateChanged = { _ ->
             resizeTouchWindow(touch.getCurrentVisualRadius())
+        }
+        touch.onDragStateChanged = { isDragging ->
+            if (isDragging) updateDrawWindowToDrag() else updateDrawWindowToIdle()
         }
         touch.onGoHome                 = { goHome() }
         touch.onLaunchApp              = { pkg -> launchApp(pkg) }
@@ -447,15 +468,76 @@ class OverlayService : Service() {
      */
     private fun onConfigUpdated() {
         touchView?.let { resizeTouchWindow(it.getCurrentVisualRadius()) }
+        updateDrawWindowToIdle()
         applySecureOverlay()
         applyBallVisibility()
+    }
+
+    // ── draw Window リサイズ ──────────────────────────────────────
+
+    /**
+     * アイドル / MOVING 状態用。draw Window をボール周辺の小さい矩形に設定し、
+     * ボール中心へ追従させる。BALL_MOVING_SCALE を含むサイズなので MOVING 状態も収容できる。
+     */
+    private fun updateDrawWindowToIdle() {
+        val params   = drawParams ?: return
+        val cfg      = LauncherRepository.config
+        val halfSize = (cfg.buttonRadiusPx * BALL_MOVING_SCALE + DRAW_IDLE_PADDING_PX).roundToInt()
+        val size     = halfSize * 2
+        val newX     = (savedCenterX - halfSize).roundToInt()
+        val newY     = (savedCenterY - halfSize).roundToInt()
+        if (params.width == size && params.height == size && params.x == newX && params.y == newY) return
+        params.width  = size
+        params.height = size
+        params.x      = newX
+        params.y      = newY
+        drawOriginX   = newX.toFloat()
+        drawOriginY   = newY.toFloat()
+        drawView?.let { v ->
+            v.windowOriginX = drawOriginX
+            v.windowOriginY = drawOriginY
+            try { windowManager.updateViewLayout(v, params) } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * DRAGGING 状態用。描画コンテンツ（ブロブ + 全ノード + グロー）が収まる最大矩形へ拡張する。
+     * ドラッグ方向は未確定なため、ボール中心から全方向に最大コンテンツ距離を確保する。
+     * 画面端でクランプしてMATCH_PARENT を回避する。
+     */
+    private fun updateDrawWindowToDrag() {
+        val params    = drawParams ?: return
+        val cfg       = LauncherRepository.config
+        val maxBlobLen = cfg.baseOffsetPx + (cfg.nodeCount - 1) * cfg.spacingPx + cfg.nodeRadiusPx + 20f
+        val nodeGlow  = cfg.nodeRadiusPx * 2.6f
+        val halfSize  = (maxBlobLen + nodeGlow + cfg.buttonRadiusPx + DRAW_IDLE_PADDING_PX).roundToInt()
+
+        val screenW   = resources.displayMetrics.widthPixels
+        val screenH   = resources.displayMetrics.heightPixels
+        val left      = maxOf(0, (savedCenterX - halfSize).roundToInt())
+        val top       = maxOf(0, (savedCenterY - halfSize).roundToInt())
+        val right     = minOf(screenW, (savedCenterX + halfSize).roundToInt())
+        val bottom    = minOf(screenH, (savedCenterY + halfSize).roundToInt())
+
+        params.width  = right - left
+        params.height = bottom - top
+        params.x      = left
+        params.y      = top
+        drawOriginX   = left.toFloat()
+        drawOriginY   = top.toFloat()
+        drawView?.let { v ->
+            v.windowOriginX = drawOriginX
+            v.windowOriginY = drawOriginY
+            try { windowManager.updateViewLayout(v, params) } catch (_: Exception) {}
+        }
     }
 
     // ── FLAG_SECURE 適用 ─────────────────────────────────────────
 
     /**
-     * secureOverlay 設定に従い drawView / touchView 両 Window の FLAG_SECURE を即時切替する。
+     * secureOverlay 設定に従い drawView Window の FLAG_SECURE を即時切替する。
      * Service 再起動不要。updateViewLayout で既存 Window を更新する。
+     * touchView は透明で描画内容がないため FLAG_SECURE は適用しない。
      */
     private fun applySecureOverlay() {
         val secure = LauncherRepository.config.secureOverlay
@@ -467,12 +549,7 @@ class OverlayService : Service() {
             params.flags = newFlags
             try { drawView?.let { windowManager.updateViewLayout(it, params) } } catch (_: Exception) {}
         }
-        touchParams?.let { params ->
-            val newFlags = if (secure) params.flags or flag else params.flags and flag.inv()
-            if (params.flags == newFlags) return@let
-            params.flags = newFlags
-            try { touchView?.let { windowManager.updateViewLayout(it, params) } } catch (_: Exception) {}
-        }
+        // touchView には FLAG_SECURE を付与しない
     }
 
     // ── PullyVisibility ログ ──────────────────────────────────────

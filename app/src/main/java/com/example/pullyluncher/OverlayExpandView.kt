@@ -29,20 +29,32 @@ private const val BLOB_ORIGIN_DIR_RATIO = 0.0f
 internal const val BALL_MOVING_SCALE = 1.18f
 
 /**
- * 描画専用の全画面 View。
+ * 描画専用の View。
  *
  * ── 役割 ──────────────────────────────────────────────────────────────
- *   FLAG_NOT_TOUCHABLE な全画面 Window に配置され、描画のみを行う。
+ *   FLAG_NOT_TOUCHABLE な Window に配置され、描画のみを行う。
  *   タッチは一切受け取らない。
  *
- * ── 状態取得 ────────────────────────────────────────────────────────────
- *   [touchView] にセットされた OverlayTouchView から onDraw 内で直接読む。
- *   座標の基準は常に touchView.centerX / touchView.centerY（スクリーン座標）。
+ * ── 座標系 ────────────────────────────────────────────────────────────
+ *   [touchView] の centerX / centerY はスクリーン座標。
+ *   Window が小さくなると Canvas 原点が (0,0) ≠ スクリーン (0,0) になるため、
+ *   onDraw の先頭で canvas.translate(-windowOriginX, -windowOriginY) を適用し、
+ *   描画コードはすべてスクリーン座標のまま扱える。
+ *
+ * ── Window サイズ ──────────────────────────────────────────────────────
+ *   アイドル時: ボール周辺の小さい矩形（Service が設定）。
+ *   ドラッグ展開時: コンテンツ全体を含む矩形（Service が拡張）。
+ *   windowOriginX / windowOriginY は Window 左上のスクリーン座標。
  */
 class OverlayExpandView(context: Context) : View(context) {
 
     /** Service が配線する。null の間は onDraw で何も描かない。 */
     var touchView: OverlayTouchView? = null
+
+    /** draw Window 左上のスクリーン座標 X。Service が updateViewLayout と同時に更新する。 */
+    var windowOriginX: Float = 0f
+    /** draw Window 左上のスクリーン座標 Y。Service が updateViewLayout と同時に更新する。 */
+    var windowOriginY: Float = 0f
 
     private val cfg get() = LauncherRepository.config
     private val blobRadius get() = cfg.buttonRadiusPx
@@ -79,13 +91,22 @@ class OverlayExpandView(context: Context) : View(context) {
     // ── 描画 ───────────────────────────────────────────────────────
 
     override fun onDraw(canvas: Canvas) {
-        val tv = touchView ?: return
+        // スクリーン座標 → Window ローカル座標へ変換。
+        // 描画コードはすべてスクリーン座標のまま記述できる。
+        canvas.save()
+        canvas.translate(-windowOriginX, -windowOriginY)
+
+        val tv = touchView ?: run {
+            canvas.restore()
+            return
+        }
         val centerX = tv.centerX
         val centerY = tv.centerY
 
         if (!tv.isDragging) {
             drawIdleBall(canvas, centerX, centerY)
             drawDebugAnchor(canvas, centerX, centerY)
+            canvas.restore()
             return
         }
 
@@ -113,6 +134,7 @@ class OverlayExpandView(context: Context) : View(context) {
             if (dist <= 0.5f) {
                 drawIdleBall(canvas, centerX, centerY)
                 drawDebugAnchor(canvas, centerX, centerY)
+                canvas.restore()
                 return
             }
             rdx = relX / dist
@@ -167,6 +189,7 @@ class OverlayExpandView(context: Context) : View(context) {
         }
 
         drawDebugAnchor(canvas, centerX, centerY)
+        canvas.restore()
     }
 
     // ── 描画ヘルパー ───────────────────────────────────────────────
