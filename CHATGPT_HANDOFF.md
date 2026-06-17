@@ -29,7 +29,9 @@ $env:JAVA_HOME = "C:\Users\Ryon\AppData\Local\Programs\Android Studio\jbr"
 ## 2. Full Commit Log (This Branch)
 
 ```
-6b74aa3 feat: redesign settings screen — Pull/Revolver tabs, SliderSettingCard, previews, feature grid  ← HEAD
+edaa1ec docs: update handoff for e102d80  ← HEAD
+e102d80 feat: improve settings UI — fixed preview, slim slider, feature list, icon app picker
+6b74aa3 feat: redesign settings screen — Pull/Revolver tabs, SliderSettingCard, previews, feature grid
 cf9fd06 docs: update handoff for 22edc98
 22edc98 feat: revolver-specific settings, X-axis speed, chevron pointer, arc guide, settings preview
 601e6c2 feat: refine V2 revolver UX — speed, snap, arc layout, double-tap-hold move
@@ -493,16 +495,30 @@ f24e487 (V2 実装)             — assembleDebug SUCCESSFUL,  lintDebug CLEAN
 - [ ] 選択中アイコンが拡大・グロー・アプリ名表示
 - [ ] 端アイコンが滑らかにフェードする
 
-### 設定画面 (6b74aa3)
+### 設定画面 (e102d80)
 - [ ] PULL / REVOLVER タブが切替可能（タップ＋スワイプ）
-- [ ] Pull ページ: プレビューにブロブ＋ノード表示
-- [ ] Revolver ページ: プレビューに内側ポインター（Pully と選択アイコンの間）
+- [ ] Pull ページ: プレビューがスクロールせず固定表示される（200dp）
+- [ ] Pull ページ: プレビューにブロブ＋ノード表示（buildBlobPath 数式）
+- [ ] Revolver ページ: プレビューがスクロールせず固定表示される（210dp）
+- [ ] Revolver ページ: ポインターが選択アイコン外側に表示される（Overlay と同じ外開きシェブロン）
 - [ ] スライダー変更がプレビューに即時反映
+- [ ] スライダーが細い（14dp サム、2dp トラック）
 - [ ] − / + ボタンで1ステップずつ変更
 - [ ] 数値欄を左右ドラッグで連続変更 / タップでキーボード入力
 - [ ] Pull / Revolver リセットボタンがデフォルト値に戻す（確認ダイアログ付き）
-- [ ] 関連機能グリッドのカードが対応ダイアログを開く（固定アプリ / 非表示 / 配色 / 撮影 / 履歴 / 権限）
+- [ ] 関連機能が3グループのリスト形式で表示される（アプリ管理 / 表示と動作 / その他、各項目に説明文付き）
+- [ ] 関連機能の各行をタップすると対応ダイアログを開く（固定アプリ / 非表示 / 配色 / 撮影 / 履歴 / 権限）
 - [ ] 詳細設定（折りたたみ）が展開/折りたたみできる
+
+### アプリピッカー (e102d80)
+- [ ] アプリアイコンが一覧に表示される
+- [ ] 検索フィルタが機能する（入力で即時絞り込み）
+- [ ] 非表示アプリ設定: 複数選択（Checkbox）が機能する
+- [ ] 非表示アプリ設定: 選択数が「X件選択中」と表示される
+- [ ] 非表示アプリ設定: 「完了」ボタンで確定、「キャンセル」で破棄
+- [ ] 非表示アプリ設定: 再オープン時に既存の非表示リストがプリチェックされる
+- [ ] 非表示アプリ設定: 検索中に選択/解除しても、検索をクリアした後も選択状態が保持される
+- [ ] 固定アプリ一覧: 各行の先頭にアプリアイコン（32dp）が表示される
 
 ### リボルバー専用設定
 - [ ] 直径スライダー → リング半径が変化 (1.5〜4.0)
