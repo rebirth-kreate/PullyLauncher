@@ -27,6 +27,7 @@ object UiConfigPrefs {
     private const val KEY_CANCEL_RATIO     = "cancel_ratio_threshold"
     private const val KEY_EDGE_DARKNESS    = "edge_darkness"
     private const val KEY_BACKGROUND_GLOW  = "background_glow"
+    private const val KEY_SECURE_OVERLAY   = "secure_overlay"
 
     fun save(context: Context, config: LauncherUiConfig) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -47,6 +48,8 @@ object UiConfigPrefs {
             .putInt(KEY_TEMP_HIDE_SECS,    config.temporaryHideSeconds)
             // リスト
             .putString(KEY_HIDDEN_PKGS,    config.hiddenPackages.joinToString(","))
+            // フラグ
+            .putBoolean(KEY_SECURE_OVERLAY, config.secureOverlay)
             .apply()
     }
 
@@ -70,7 +73,8 @@ object UiConfigPrefs {
             nodeCount            = prefs.getInt(KEY_NODE_COUNT,        default.nodeCount),
             colorPreset          = prefs.getInt(KEY_COLOR_PRESET,      0),
             temporaryHideSeconds = prefs.getInt(KEY_TEMP_HIDE_SECS,    default.temporaryHideSeconds).coerceIn(1, 10),
-            hiddenPackages       = hiddenPkgs
+            hiddenPackages       = hiddenPkgs,
+            secureOverlay        = prefs.getBoolean(KEY_SECURE_OVERLAY, default.secureOverlay)
         )
     }
 }

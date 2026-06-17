@@ -28,5 +28,7 @@ data class LauncherUiConfig(
     /** フローティングボールを非表示にするアプリの packageName リスト */
     val hiddenPackages: List<String> = emptyList(),
     /** ダブルタップで一時非表示にする秒数（5〜10）*/
-    val temporaryHideSeconds: Int = 5
+    val temporaryHideSeconds: Int = 5,
+    /** スクリーンショット・画面録画・画面共有からPullyを除外する */
+    val secureOverlay: Boolean = true
 )
