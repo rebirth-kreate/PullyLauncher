@@ -19,7 +19,7 @@
     <string name="section_usage_history">Usage History</string>
     <string name="section_floating">Floating</string>
     <string name="section_hidden_apps">Hidden Apps</string>
-    <string name="section_secure_overlay">Screenshot Exclusion</string>
+    <string name="section_capture_mode">Capture Mode</string>
 
     <!-- ── 設定ラベル ── -->
     <string name="setting_button_radius">Main button size</string>
@@ -73,7 +73,13 @@
     <!-- ── アプリピッカー ── -->
     <string name="picker_title">Select App</string>
 
-    <!-- ── スクリーンショット除外 ── -->
-    <string name="setting_secure_overlay">Hide from screenshots and recordings</string>
-    <string name="hint_secure_overlay">Hides Pully from screenshots, screen recordings, and screen sharing.</string>
+    <!-- ── 撮影モード ── -->
+    <string name="setting_capture_mode">Hide Pully during screen recording</string>
+    <string name="hint_capture_mode">When enabled, Pully is completely hidden. No secure window is used — screenshots and recordings work normally. Restore Pully from the notification.</string>
+
+    <!-- ── 通知 ── -->
+    <string name="notif_running_text">Floating button is active</string>
+    <string name="notif_capture_mode_title">PullyLauncher — Capture Mode</string>
+    <string name="notif_capture_mode_text">Pully is hidden for recording.</string>
+    <string name="notif_show_pully">Show Pully</string>
 </resources>

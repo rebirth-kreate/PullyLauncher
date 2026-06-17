@@ -19,7 +19,7 @@
     <string name="section_usage_history">使用履歴</string>
     <string name="section_floating">フローティング</string>
     <string name="section_hidden_apps">フローティング非表示アプリ</string>
-    <string name="section_secure_overlay">スクリーンショット除外</string>
+    <string name="section_capture_mode">撮影モード</string>
 
     <!-- ── 設定ラベル ── -->
     <string name="setting_button_radius">メインボタンサイズ</string>
@@ -73,7 +73,13 @@
     <!-- ── アプリピッカー ── -->
     <string name="picker_title">アプリを選択</string>
 
-    <!-- ── スクリーンショット除外 ── -->
-    <string name="setting_secure_overlay">スクリーンショット・画面録画に表示しない</string>
-    <string name="hint_secure_overlay">Pullyをスクリーンショット、画面録画、画面共有に表示しないようにします。</string>
+    <!-- ── 撮影モード ── -->
+    <string name="setting_capture_mode">画面録画中に Pully を非表示にする</string>
+    <string name="hint_capture_mode">ON にすると Pully が完全に非表示になります。スクリーンショットや画面録画への影響はありません。通知から Pully を再表示できます。</string>
+
+    <!-- ── 通知 ── -->
+    <string name="notif_running_text">フローティングボタンが表示中です</string>
+    <string name="notif_capture_mode_title">PullyLauncher — 撮影モード中</string>
+    <string name="notif_capture_mode_text">録画のため Pully を非表示中です。</string>
+    <string name="notif_show_pully">Pullyを再表示</string>
 </resources>

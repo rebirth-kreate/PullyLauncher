@@ -29,6 +29,6 @@ data class LauncherUiConfig(
     val hiddenPackages: List<String> = emptyList(),
     /** ダブルタップで一時非表示にする秒数（5〜10）*/
     val temporaryHideSeconds: Int = 5,
-    /** スクリーンショット・画面録画・画面共有からPullyを除外する */
-    val secureOverlay: Boolean = true
+    /** 撮影モード中は Pully を完全に非表示にする（FLAG_SECURE は使わない） */
+    val captureMode: Boolean = false
 )

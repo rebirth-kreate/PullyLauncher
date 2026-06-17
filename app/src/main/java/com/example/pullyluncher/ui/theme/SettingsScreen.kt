@@ -426,11 +426,11 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // ---- スクリーンショット除外 / Screenshot Exclusion ----
-        SettingSection(title = stringResource(R.string.section_secure_overlay))
+        // ---- 撮影モード / Capture Mode ----
+        SettingSection(title = stringResource(R.string.section_capture_mode))
 
         Text(
-            text  = stringResource(R.string.hint_secure_overlay),
+            text  = stringResource(R.string.hint_capture_mode),
             color = Color(0xFF81A1C1),
             style = MaterialTheme.typography.bodySmall
         )
@@ -440,13 +440,13 @@ fun SettingsScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text     = stringResource(R.string.setting_secure_overlay),
+                text     = stringResource(R.string.setting_capture_mode),
                 color    = Color.White,
                 modifier = Modifier.weight(1f)
             )
             Switch(
-                checked         = config.secureOverlay,
-                onCheckedChange = { onConfigChange(config.copy(secureOverlay = it)) }
+                checked         = config.captureMode,
+                onCheckedChange = { onConfigChange(config.copy(captureMode = it)) }
             )
         }
 
