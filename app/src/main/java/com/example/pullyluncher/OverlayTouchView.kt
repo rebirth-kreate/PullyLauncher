@@ -10,7 +10,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-private const val LONG_PRESS_MS   = 500L
+private const val LONG_PRESS_MS   = 400L
 private const val MOVE_CANCEL_PX  = 28
 /**
  * ダブルタップと判定する最大間隔（ミリ秒）。
@@ -45,16 +45,21 @@ private const val AXIS_SMOOTH_FACTOR = 0.18f
 internal const val REVOLVER_CANCEL_ZONE_RATIO = 1.2f
 
 /**
- * 指が中心に近い場合の回転速度（指を 100px 動かしたときのアイテム移動数）。
- * 値を大きくすると素早く回転する。後から調整可能。
+ * 回転速度の全体倍率。1.0 が基準速度。NEAR/FAR の比率を維持したまま全体速度を変更する。
+ * 後から調整可能。
  */
-private const val REVOLVER_SPEED_NEAR = 4.0f
+private const val REVOLVER_SPEED_MULTIPLIER = 0.6f
 
 /**
- * 指が中心から遠い場合の回転速度（指を 100px 動かしたときのアイテム移動数）。
- * 値を小さくするとゆっくり回転する。後から調整可能。
+ * 指が中心に近い場合の回転速度（指を 100px 動かしたときのアイテム移動数）。
+ * REVOLVER_SPEED_MULTIPLIER が掛けられた値が実効速度。後から調整可能。
  */
-private const val REVOLVER_SPEED_FAR = 0.5f
+private const val REVOLVER_SPEED_NEAR = 4.0f * REVOLVER_SPEED_MULTIPLIER  // 実効値 ≈ 2.4
+
+/**
+ * 指が中心から遠い場合の回転速度。後から調整可能。
+ */
+private const val REVOLVER_SPEED_FAR = 0.5f * REVOLVER_SPEED_MULTIPLIER   // 実効値 ≈ 0.3
 
 /**
  * 速度が最低値になる中心からの距離（px）。後から調整可能。
@@ -65,6 +70,28 @@ internal const val REVOLVER_SPEED_MAX_DIST_PX = 300f
  * 指を 100px 上下したときの基準移動量（アイテム計算の分母）。後から調整可能。
  */
 private const val REVOLVER_BASE_PX_PER_ITEM = 100f
+
+/**
+ * 選択枠付近でスナップ抵抗がかかる範囲（アイテム間隔の分数）。
+ * 0=スナップなし / 0.5=最大範囲。後から調整可能。
+ */
+private const val REVOLVER_SNAP_ZONE_FRAC   = 0.28f
+
+/**
+ * スナップの抵抗強度（0=無効 / 1=完全停止）。初期値は弱め。後から調整可能。
+ */
+private const val REVOLVER_SNAP_STRENGTH    = 0.35f
+
+/**
+ * 指を離した後の選択枠へのスナップアニメーション時間（ms）。後から調整可能。
+ */
+private const val REVOLVER_SNAP_DURATION_MS = 120L
+
+/**
+ * ダブルタップ後の 2 回目タップをこれ以上ホールドすると本体移動モードへ入る（ms）。
+ * 後から調整可能。
+ */
+private const val DOUBLE_TAP_HOLD_MS = 250L
 
 /**
  * タッチ専用の小さい View。
@@ -158,6 +185,16 @@ class OverlayTouchView(
     private var prevCancelled = false
     private var lastPinnedHapticIndex = -1
 
+    // ── スナップアニメーション ────────────────────────────────────────
+    private var snapRunnable: Runnable? = null
+    private var snapPendingLaunchPkg: String? = null
+    private var snapStartRoto = 0f
+    private var snapTargetLinear = 0f
+    private var snapStartTime = 0L
+
+    // ── ダブルタップホールド（本体移動） ──────────────────────────────
+    private var doubleTapHoldRunnable: Runnable? = null
+
     private val handler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
     /** シングルタップ確定後に goHome を遅延発火する Runnable。ダブルタップ検出時にキャンセルする。 */
@@ -211,9 +248,20 @@ class OverlayTouchView(
                 touchState = TouchState.PRESSING
                 LauncherRepository.refreshHistoryAsync(context.applicationContext)
 
-                val runnable = Runnable { onLongPressTimer() }
-                longPressRunnable = runnable
-                handler.postDelayed(runnable, LONG_PRESS_MS)
+                val now = SystemClock.elapsedRealtime()
+                if (lastTapUpTime > 0L && now - lastTapUpTime <= DOUBLE_TAP_MS) {
+                    // 2 回目タップがダブルタップ窓内 → ホールドタイマー開始（長押しは起動しない）
+                    singleTapRunnable?.let { handler.removeCallbacks(it) }
+                    singleTapRunnable = null
+                    val holdR = Runnable { onDoubleTapHoldTimer() }
+                    doubleTapHoldRunnable = holdR
+                    handler.postDelayed(holdR, DOUBLE_TAP_HOLD_MS)
+                } else {
+                    lastTapUpTime = 0L
+                    val runnable = Runnable { onLongPressTimer() }
+                    longPressRunnable = runnable
+                    handler.postDelayed(runnable, LONG_PRESS_MS)
+                }
                 return true
             }
 
@@ -265,24 +313,14 @@ class OverlayTouchView(
                         val pinned = LauncherRepository.pinnedApps
                         val shouldLaunch = !inCancelZone && selectedPinnedIndex in pinned.indices
                         val pkgToLaunch  = if (shouldLaunch) pinned[selectedPinnedIndex].packageName else null
-
-                        isPinnedMenuOpen    = false
-                        touchState          = TouchState.IDLE
-                        rotoOffset          = 0f
-                        selectedPinnedIndex = -1
-                        inCancelZone        = false
-                        lastPinnedHapticIndex = -1
-                        onDrawInvalidate?.invoke()
-
-                        if (pkgToLaunch != null) onLaunchPinnedApp?.invoke(pkgToLaunch)
+                        startRevolverSnap(pkgToLaunch)
                     }
                     TouchState.PRESSING -> {
                         val now = SystemClock.elapsedRealtime()
-                        val sinceLastTap = now - lastTapUpTime
-                        if (lastTapUpTime > 0L && sinceLastTap <= DOUBLE_TAP_MS) {
-                            // ── ダブルタップ確定 ────────────────────────────────────────
-                            singleTapRunnable?.let { handler.removeCallbacks(it) }
-                            singleTapRunnable = null
+                        if (doubleTapHoldRunnable != null) {
+                            // ── ダブルタップ（ホールド前に離した）→ 一時非表示 ────────────
+                            doubleTapHoldRunnable?.let { handler.removeCallbacks(it) }
+                            doubleTapHoldRunnable = null
                             lastTapUpTime = 0L
                             touchState = TouchState.IDLE
                             onDrawInvalidate?.invoke()
@@ -324,14 +362,10 @@ class OverlayTouchView(
             onHapticFeedback?.invoke()
             onDrawInvalidate?.invoke()
         } else {
-            // V1: 固定アプリ未登録の場合はボール位置変更モード
-            touchState = TouchState.MOVING
-            touchDownX = lastRawX
-            touchDownY = lastRawY
-            moveStartCenterX = centerX
-            moveStartCenterY = centerY
-            onMoveStateChanged?.invoke(true)
-            onDrawInvalidate?.invoke()
+            // 固定アプリなし: 振動のみ。移動モードへは入らない
+            // 次の ACTION_UP は IDLE 分岐で無視される
+            touchState = TouchState.IDLE
+            onHapticFeedback?.invoke()
         }
     }
 
@@ -349,7 +383,15 @@ class OverlayTouchView(
             val normalizedDist = (dist / REVOLVER_SPEED_MAX_DIST_PX).coerceIn(0f, 1f)
             val speedFactor    = REVOLVER_SPEED_NEAR + (REVOLVER_SPEED_FAR - REVOLVER_SPEED_NEAR) * normalizedDist
             // 上方向（負の deltaY）でオフセット増加 → 次のアイテムへ
-            val deltaOffset = -(rawY - lastRawY) * speedFactor / REVOLVER_BASE_PX_PER_ITEM
+            val rawDelta = -(rawY - lastRawY) * speedFactor / REVOLVER_BASE_PX_PER_ITEM
+            // 選択枠付近でのスナップ抵抗（中心に近づくほど減速）
+            val nearestIntF  = rotoOffset.roundToInt().toFloat()
+            val distFromSnap = abs(rotoOffset - nearestIntF)
+            val snapFactor   = if (distFromSnap < REVOLVER_SNAP_ZONE_FRAC) {
+                val t = distFromSnap / REVOLVER_SNAP_ZONE_FRAC
+                1f - REVOLVER_SNAP_STRENGTH * (1f - t)
+            } else 1f
+            val deltaOffset = rawDelta * snapFactor
             rotoOffset = ((rotoOffset + deltaOffset) % count + count) % count
 
             val newIdx = rotoOffset.roundToInt() % count
@@ -369,6 +411,8 @@ class OverlayTouchView(
         longPressRunnable = null
         singleTapRunnable?.let { handler.removeCallbacks(it) }
         singleTapRunnable = null
+        doubleTapHoldRunnable?.let { handler.removeCallbacks(it) }
+        doubleTapHoldRunnable = null
         touchState = TouchState.DRAGGING
         dragX = centerX
         dragY = centerY
@@ -380,6 +424,68 @@ class OverlayTouchView(
         prevSelectedIndex = -1
         prevCancelled = false
         internalUpdateDrag(rawX, rawY)
+    }
+
+    /** リボルバーメニューを指定アプリへスナップしてから終了する。pkgToLaunch=null ならキャンセル。 */
+    private fun startRevolverSnap(pkgToLaunch: String?) {
+        val count = LauncherRepository.pinnedApps.size
+        if (count == 0) { finishRevolverMenu(pkgToLaunch); return }
+        val rawTarget = rotoOffset.roundToInt()
+        val snapDelta = rawTarget.toFloat() - rotoOffset  // [-0.5, 0.5]
+        if (abs(snapDelta) < 0.02f) { finishRevolverMenu(pkgToLaunch); return }
+
+        snapStartRoto        = rotoOffset
+        snapTargetLinear     = rotoOffset + snapDelta
+        snapPendingLaunchPkg = pkgToLaunch
+        snapStartTime        = SystemClock.elapsedRealtime()
+
+        val r = object : Runnable {
+            override fun run() {
+                val elapsed = (SystemClock.elapsedRealtime() - snapStartTime).toFloat()
+                val t       = (elapsed / REVOLVER_SNAP_DURATION_MS.toFloat()).coerceIn(0f, 1f)
+                val tEased  = 1f - (1f - t) * (1f - t)  // ease-out quadratic
+                rotoOffset  = snapStartRoto + (snapTargetLinear - snapStartRoto) * tEased
+                rotoOffset  = ((rotoOffset % count) + count) % count
+                onDrawInvalidate?.invoke()
+                if (t < 1f) {
+                    handler.postDelayed(this, 16)
+                } else {
+                    snapRunnable = null
+                    val pkg = snapPendingLaunchPkg
+                    snapPendingLaunchPkg = null
+                    finishRevolverMenu(pkg)
+                }
+            }
+        }
+        snapRunnable = r
+        handler.post(r)
+    }
+
+    /** リボルバーメニューの状態をリセットし、必要に応じてアプリを起動する。 */
+    private fun finishRevolverMenu(pkgToLaunch: String?) {
+        isPinnedMenuOpen      = false
+        touchState            = TouchState.IDLE
+        rotoOffset            = 0f
+        selectedPinnedIndex   = -1
+        inCancelZone          = false
+        lastPinnedHapticIndex = -1
+        onDrawInvalidate?.invoke()
+        if (pkgToLaunch != null) onLaunchPinnedApp?.invoke(pkgToLaunch)
+    }
+
+    /** ダブルタップホールドが確定 → 本体移動モードへ入る。 */
+    private fun onDoubleTapHoldTimer() {
+        if (touchState != TouchState.PRESSING) return
+        doubleTapHoldRunnable = null
+        lastTapUpTime         = 0L
+        touchState            = TouchState.MOVING
+        touchDownX            = lastRawX
+        touchDownY            = lastRawY
+        moveStartCenterX      = centerX
+        moveStartCenterY      = centerY
+        onHapticFeedback?.invoke()
+        onMoveStateChanged?.invoke(true)
+        onDrawInvalidate?.invoke()
     }
 
     private fun applyMovePosition(rawX: Float, rawY: Float) {
@@ -450,11 +556,17 @@ class OverlayTouchView(
         longPressRunnable = null
         singleTapRunnable?.let { handler.removeCallbacks(it) }
         singleTapRunnable = null
+        doubleTapHoldRunnable?.let { handler.removeCallbacks(it) }
+        doubleTapHoldRunnable = null
+        snapRunnable?.let { handler.removeCallbacks(it) }
+        snapRunnable = null
+        snapPendingLaunchPkg = null
+        lastTapUpTime = 0L
         if (isPinnedMenuOpen) {
-            isPinnedMenuOpen    = false
-            rotoOffset          = 0f
-            selectedPinnedIndex = -1
-            inCancelZone        = false
+            isPinnedMenuOpen      = false
+            rotoOffset            = 0f
+            selectedPinnedIndex   = -1
+            inCancelZone          = false
             lastPinnedHapticIndex = -1
         }
         resetDragState()
@@ -521,5 +633,7 @@ class OverlayTouchView(
         super.onDetachedFromWindow()
         longPressRunnable?.let { handler.removeCallbacks(it) }
         singleTapRunnable?.let { handler.removeCallbacks(it) }
+        doubleTapHoldRunnable?.let { handler.removeCallbacks(it) }
+        snapRunnable?.let { handler.removeCallbacks(it) }
     }
 }

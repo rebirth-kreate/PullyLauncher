@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -32,6 +33,11 @@ internal const val BALL_MOVING_SCALE = 1.18f
 
 /** リボルバーリングの半径比率（ボール半径 × この値）。後から調整可能。 */
 private const val REVOLVER_RING_RATIO = 2.4f
+
+/** 選択枠から隣アイテムまでの間隔（度）。後から調整可能。 */
+private const val REVOLVER_ARC_PER_ITEM_DEG  = 60f
+/** 全アイテムが広がる最大アーク角（度）。この値を超えると自動縮小。後から調整可能。 */
+private const val REVOLVER_ARC_MAX_TOTAL_DEG = 240f
 
 /**
  * 描画専用の View。MATCH_PARENT な Window に配置され、描画のみを行う。
@@ -206,7 +212,9 @@ class OverlayExpandView(context: Context) : View(context) {
         val selectorAngleDeg = cfg.selectorPosition.angleDeg
         val selectorAngleRad = Math.toRadians(selectorAngleDeg.toDouble()).toFloat()
 
-        val angleStep = 360.0 / count
+        // アーク配置：選択枠周辺へ集約（360度均等配置から変更）
+        val arcPerItem = if (count <= 1) 0f
+            else minOf(REVOLVER_ARC_PER_ITEM_DEG, REVOLVER_ARC_MAX_TOTAL_DEG / count.toFloat())
 
         // ── キャンセル範囲グロー ────────────────────────────────────
         val cancelRadius = cfg.buttonRadiusPx * REVOLVER_CANCEL_ZONE_RATIO
@@ -243,21 +251,35 @@ class OverlayExpandView(context: Context) : View(context) {
         revolverSelectorPaint.strokeWidth = 3.5f
         canvas.drawCircle(selX, selY, selRadius, revolverSelectorPaint)
 
-        // ── アイテム（回転して配置）──────────────────────────────────
+        // ── アイテム（アーク配置・循環）────────────────────────────────
+        val halfCount = count / 2f
         for (i in 0 until count) {
-            val itemAngleDeg = selectorAngleDeg - (i - tv.rotoOffset) * angleStep
-            val itemAngleRad = Math.toRadians(itemAngleDeg).toFloat()
+            // 循環最短距離で選択枠中心からの位置を求める
+            var relIdx = i.toFloat() - tv.rotoOffset
+            while (relIdx >  halfCount) relIdx -= count
+            while (relIdx < -halfCount) relIdx += count
+
+            val itemAngleDeg = selectorAngleDeg - relIdx * arcPerItem
+            val itemAngleRad = Math.toRadians(itemAngleDeg.toDouble()).toFloat()
             val itemX = cx + cos(itemAngleRad) * ringRadius
             val itemY = cy + sin(itemAngleRad) * ringRadius
 
+            // アーク端に近いほど透明度・サイズを下げる（折り返しを自然に見せる）
+            val arcProx   = (1f - abs(relIdx) / halfCount.coerceAtLeast(1f)).coerceIn(0f, 1f)
+            val extraDim  = if (count <= 2) 1f else 0.15f + 0.85f * arcProx
+
             val isSelected = i == tv.selectedPinnedIndex && !inCancel
-            val dimFactor  = when {
+            val baseDim    = when {
                 inCancel   -> 0.30f
                 isSelected -> 1.00f
                 else       -> 0.65f
             }
-            val itemAlpha  = (dimFactor * 255).toInt()
-            val drawRadius = if (isSelected) cfg.nodeRadiusPx * 1.18f else cfg.nodeRadiusPx * 0.92f
+            val dimFactor  = baseDim * extraDim
+            val itemAlpha  = (dimFactor * 255).toInt().coerceIn(0, 255)
+            val drawRadius = when {
+                isSelected -> cfg.nodeRadiusPx * 1.18f
+                else       -> cfg.nodeRadiusPx * (0.70f + 0.22f * arcProx).coerceIn(0.70f, 0.92f)
+            }
 
             // 選択中グロー
             if (isSelected) {
