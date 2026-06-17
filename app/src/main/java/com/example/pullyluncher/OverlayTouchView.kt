@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 private const val LONG_PRESS_MS   = 500L
@@ -32,12 +33,38 @@ private const val HIT_MARGIN = 2f
  *   axis はボール内（dist < buttonRadiusPx × 1.2）でのみこの係数で更新される。
  *   ボール外へ出た瞬間に axisLocked = true となり、以後 axis は一切更新されない。
  *
- * ── チューニングガイド ──────────────────────────────────────────────────
- *   大きい（0.25〜0.35）→ 素早く指の方向へ収束する
- *   小さい（0.10〜0.15）→ ゆっくり収束するが残像感が強い
  * 推奨: 0.18
  */
 private const val AXIS_SMOOTH_FACTOR = 0.18f
+
+// ── V2 リボルバー定数 ──────────────────────────────────────────────
+/**
+ * キャンセル範囲半径 = ボール半径 × この値。
+ * 指がこの範囲内にある状態で離すとキャンセル扱いになる。後から調整可能。
+ */
+internal const val REVOLVER_CANCEL_ZONE_RATIO = 1.2f
+
+/**
+ * 指が中心に近い場合の回転速度（指を 100px 動かしたときのアイテム移動数）。
+ * 値を大きくすると素早く回転する。後から調整可能。
+ */
+private const val REVOLVER_SPEED_NEAR = 4.0f
+
+/**
+ * 指が中心から遠い場合の回転速度（指を 100px 動かしたときのアイテム移動数）。
+ * 値を小さくするとゆっくり回転する。後から調整可能。
+ */
+private const val REVOLVER_SPEED_FAR = 0.5f
+
+/**
+ * 速度が最低値になる中心からの距離（px）。後から調整可能。
+ */
+internal const val REVOLVER_SPEED_MAX_DIST_PX = 300f
+
+/**
+ * 指を 100px 上下したときの基準移動量（アイテム計算の分母）。後から調整可能。
+ */
+private const val REVOLVER_BASE_PX_PER_ITEM = 100f
 
 /**
  * タッチ専用の小さい View。
@@ -52,6 +79,13 @@ private const val AXIS_SMOOTH_FACTOR = 0.18f
  *   すべての計算に rawX/rawY（スクリーン座標）を使う。
  *   Window の位置はあくまでタッチ受付エリアを示すだけであり、
  *   座標計算には影響しない。
+ *
+ * ── ジェスチャー分岐 ────────────────────────────────────────────────
+ *   短タップ           → goHome（ホーム画面へ戻る）
+ *   ダブルタップ        → 一時非表示
+ *   MOVE_CANCEL_PX 超移動 → DRAGGING（V1: 履歴アプリ引き出し）
+ *   長押し 500ms・pinnedApps 非空  → PINNED_MENU（V2: リボルバー選択）
+ *   長押し 500ms・pinnedApps 空    → MOVING（V1: ボール位置変更）
  */
 class OverlayTouchView(
     context: Context,
@@ -60,7 +94,7 @@ class OverlayTouchView(
 ) : View(context) {
 
     // ── タッチ状態機械 ─────────────────────────────────────────────
-    private enum class TouchState { IDLE, PRESSING, MOVING, DRAGGING }
+    private enum class TouchState { IDLE, PRESSING, MOVING, DRAGGING, PINNED_MENU }
     private var touchState = TouchState.IDLE
 
     // ── ボール中心座標（スクリーン座標） ───────────────────────────
@@ -70,7 +104,7 @@ class OverlayTouchView(
         private set
 
     // 描画 View が読む公開プロパティ
-    val isMoving get() = touchState == TouchState.MOVING
+    val isMoving   get() = touchState == TouchState.MOVING
     val isDragging get() = touchState == TouchState.DRAGGING
 
     /** axis が少なくとも 1 フレーム更新されているか（描画判定用）。 */
@@ -96,8 +130,22 @@ class OverlayTouchView(
     var isCancelled = false
         private set
 
+    // ── V2 リボルバー公開状態 ──────────────────────────────────────
+    /** リボルバーメニューが開いているか（OverlayExpandView が読む）*/
+    var isPinnedMenuOpen = false
+        private set
+    /** 現在の回転オフセット（0..count の連続値、OverlayExpandView が読む）*/
+    var rotoOffset = 0f
+        private set
+    /** 現在選択中の固定アプリインデックス（-1 = 未選択 or キャンセル中）*/
+    var selectedPinnedIndex = -1
+        private set
+    /** 指がキャンセル範囲内にあるか（描画ハイライト用）*/
+    var inCancelZone = false
+        private set
+
     // ── 内部状態 ───────────────────────────────────────────────────
-    private val cfg get() = LauncherRepository.config
+    private val cfg      get() = LauncherRepository.config
     private val appSlots get() = LauncherRepository.appSlots
 
     private var touchDownX = 0f
@@ -108,6 +156,7 @@ class OverlayTouchView(
     private var moveStartCenterY = 0f
     private var prevSelectedIndex = -1
     private var prevCancelled = false
+    private var lastPinnedHapticIndex = -1
 
     private val handler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
@@ -123,6 +172,8 @@ class OverlayTouchView(
     var onPositionChanged: ((Float, Float) -> Unit)? = null
     var onGoHome: (() -> Unit)? = null
     var onLaunchApp: ((String) -> Unit)? = null
+    /** 固定アプリをリボルバーで選択したときに通知する（packageName を渡す）*/
+    var onLaunchPinnedApp: ((String) -> Unit)? = null
     var onHapticFeedback: (() -> Unit)? = null
     /** 描画 View の invalidate() を要求する。タッチ状態が変化した際に呼ぶ。 */
     var onDrawInvalidate: (() -> Unit)? = null
@@ -148,12 +199,8 @@ class OverlayTouchView(
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 // ── 円形ヒットテスト ──────────────────────────────────────────
-                // touch Window は正方形なので、角への誤タップを防ぐために
-                // ローカル座標で視覚円の内側かを判定する。
-                // width * 0.5f で整数除算の誤差を排除し、円中心を厳密化
                 val lx = event.x - width * 0.5f
                 val ly = event.y - height * 0.5f
-                // -2f: Window 端の toInt() 切り捨て誤差分を吸収して角の誤タップを防ぐ
                 val hitR = getCurrentVisualRadius() - HIT_MARGIN
                 if (lx * lx + ly * ly > hitR * hitR) return false
 
@@ -172,8 +219,6 @@ class OverlayTouchView(
 
             MotionEvent.ACTION_MOVE -> {
                 if (touchState == TouchState.IDLE) return false
-                lastRawX = rawX
-                lastRawY = rawY
 
                 when (touchState) {
                     TouchState.MOVING -> applyMovePosition(rawX, rawY)
@@ -185,8 +230,11 @@ class OverlayTouchView(
                             startDragMode(rawX, rawY)
                         }
                     }
+                    TouchState.PINNED_MENU -> applyRevolverMove(rawX, rawY)
                     TouchState.IDLE -> return false
                 }
+                lastRawX = rawX
+                lastRawY = rawY
                 return true
             }
 
@@ -213,12 +261,26 @@ class OverlayTouchView(
                         onPositionChanged?.invoke(centerX, centerY)
                         onDrawInvalidate?.invoke()
                     }
+                    TouchState.PINNED_MENU -> {
+                        val pinned = LauncherRepository.pinnedApps
+                        val shouldLaunch = !inCancelZone && selectedPinnedIndex in pinned.indices
+                        val pkgToLaunch  = if (shouldLaunch) pinned[selectedPinnedIndex].packageName else null
+
+                        isPinnedMenuOpen    = false
+                        touchState          = TouchState.IDLE
+                        rotoOffset          = 0f
+                        selectedPinnedIndex = -1
+                        inCancelZone        = false
+                        lastPinnedHapticIndex = -1
+                        onDrawInvalidate?.invoke()
+
+                        if (pkgToLaunch != null) onLaunchPinnedApp?.invoke(pkgToLaunch)
+                    }
                     TouchState.PRESSING -> {
                         val now = SystemClock.elapsedRealtime()
                         val sinceLastTap = now - lastTapUpTime
                         if (lastTapUpTime > 0L && sinceLastTap <= DOUBLE_TAP_MS) {
                             // ── ダブルタップ確定 ────────────────────────────────────────
-                            // 保留中の goHome をキャンセルして一時非表示を発火する
                             singleTapRunnable?.let { handler.removeCallbacks(it) }
                             singleTapRunnable = null
                             lastTapUpTime = 0L
@@ -227,7 +289,6 @@ class OverlayTouchView(
                             onDoubleTapTemporaryHide?.invoke()
                         } else {
                             // ── シングルタップ候補 ──────────────────────────────────────
-                            // DOUBLE_TAP_MS 後にダブルタップが来なければ goHome を発火する
                             lastTapUpTime = now
                             touchState = TouchState.IDLE
                             onDrawInvalidate?.invoke()
@@ -251,19 +312,61 @@ class OverlayTouchView(
 
     private fun onLongPressTimer() {
         if (touchState != TouchState.PRESSING) return
-        touchState = TouchState.MOVING
-        touchDownX = lastRawX
-        touchDownY = lastRawY
-        moveStartCenterX = centerX
-        moveStartCenterY = centerY
-        onMoveStateChanged?.invoke(true)
+        val pinned = LauncherRepository.pinnedApps
+        if (pinned.isNotEmpty()) {
+            // V2: 固定アプリが登録されていればリボルバーメニューを開く
+            touchState          = TouchState.PINNED_MENU
+            isPinnedMenuOpen    = true
+            rotoOffset          = 0f
+            selectedPinnedIndex = 0
+            inCancelZone        = false
+            lastPinnedHapticIndex = -1
+            onHapticFeedback?.invoke()
+            onDrawInvalidate?.invoke()
+        } else {
+            // V1: 固定アプリ未登録の場合はボール位置変更モード
+            touchState = TouchState.MOVING
+            touchDownX = lastRawX
+            touchDownY = lastRawY
+            moveStartCenterX = centerX
+            moveStartCenterY = centerY
+            onMoveStateChanged?.invoke(true)
+            onDrawInvalidate?.invoke()
+        }
+    }
+
+    private fun applyRevolverMove(rawX: Float, rawY: Float) {
+        val dx = rawX - touchDownX
+        val dy = rawY - touchDownY
+        val dist = sqrt(dx * dx + dy * dy)
+        val cancelRadius = cfg.buttonRadiusPx * REVOLVER_CANCEL_ZONE_RATIO
+        inCancelZone = dist < cancelRadius
+
+        val pinned = LauncherRepository.pinnedApps
+        val count  = pinned.size
+        if (!inCancelZone && count > 0) {
+            // 中心に近いほど速く、遠いほどゆっくり回転
+            val normalizedDist = (dist / REVOLVER_SPEED_MAX_DIST_PX).coerceIn(0f, 1f)
+            val speedFactor    = REVOLVER_SPEED_NEAR + (REVOLVER_SPEED_FAR - REVOLVER_SPEED_NEAR) * normalizedDist
+            // 上方向（負の deltaY）でオフセット増加 → 次のアイテムへ
+            val deltaOffset = -(rawY - lastRawY) * speedFactor / REVOLVER_BASE_PX_PER_ITEM
+            rotoOffset = ((rotoOffset + deltaOffset) % count + count) % count
+
+            val newIdx = rotoOffset.roundToInt() % count
+            if (newIdx != selectedPinnedIndex) {
+                selectedPinnedIndex = newIdx
+                if (lastPinnedHapticIndex != newIdx) {
+                    onHapticFeedback?.invoke()
+                    lastPinnedHapticIndex = newIdx
+                }
+            }
+        }
         onDrawInvalidate?.invoke()
     }
 
     private fun startDragMode(rawX: Float, rawY: Float) {
         longPressRunnable?.let { handler.removeCallbacks(it) }
         longPressRunnable = null
-        // ドラッグ開始時に保留中の goHome もキャンセルする
         singleTapRunnable?.let { handler.removeCallbacks(it) }
         singleTapRunnable = null
         touchState = TouchState.DRAGGING
@@ -284,21 +387,17 @@ class OverlayTouchView(
         val screenH = resources.displayMetrics.heightPixels.toFloat()
         centerX = (moveStartCenterX + rawX - touchDownX).coerceIn(0f, screenW)
         centerY = (moveStartCenterY + rawY - touchDownY).coerceIn(0f, screenH)
-        onBallMoved?.invoke(centerX, centerY)   // タッチ Window 位置更新 + 描画更新
+        onBallMoved?.invoke(centerX, centerY)
     }
 
     private fun internalUpdateDrag(x: Float, y: Float) {
         dragX = x
         dragY = y
 
-        // ── 方向ベクトルをタッチ開始位置基準で計算 ─────────────────────
-        // ボール中心基準だと近距離で角度が不安定になる。
-        // タッチ開始位置基準にすることで「ユーザーが引っぱった方向」をそのまま軸にする。
         val dx = x - touchDownX
         val dy = y - touchDownY
         val dist = sqrt(dx * dx + dy * dy)
 
-        // デッドゾーン: 24px 未満は axis 未確定のまま描画だけ更新して終了
         val directionDeadZone = 24f
         if (dist < directionDeadZone) {
             onDrawInvalidate?.invoke()
@@ -310,11 +409,9 @@ class OverlayTouchView(
 
         if (!axisLocked) {
             if (!isAxisReady) {
-                // 初回フレームは直接代入
                 axisX = targetX
                 axisY = targetY
             } else {
-                // デッドゾーン超え後はスムージングで収束
                 axisX = axisX * (1f - AXIS_SMOOTH_FACTOR) + targetX * AXIS_SMOOTH_FACTOR
                 axisY = axisY * (1f - AXIS_SMOOTH_FACTOR) + targetY * AXIS_SMOOTH_FACTOR
                 val len = sqrt(axisX * axisX + axisY * axisY)
@@ -324,13 +421,11 @@ class OverlayTouchView(
                 }
             }
 
-            // touchDown から一定距離引いた時点で軸を完全固定
             val freezeDist = cfg.buttonRadiusPx * 1.8f
             if (dist >= freezeDist) {
                 axisLocked = true
             }
         }
-        // axisLocked == true の場合は axis を一切更新しない
 
         if (isAxisReady) updateSelection()
         onDrawInvalidate?.invoke()
@@ -342,12 +437,30 @@ class OverlayTouchView(
      * ・OverlayExpandView.drawIdleBall と完全に同じ式
      * ・OverlayService が touchWindow サイズに使う
      * ・ACTION_DOWN の hit 判定がここから HIT_MARGIN を引く
-     *
-     * IDLE / MOVING のどちらの状態でも呼べる。
-     * 状態変化後に呼べば必ず正しいサイズを返す。
      */
     fun getCurrentVisualRadius(): Float =
         LauncherRepository.config.buttonRadiusPx * (if (isMoving) BALL_MOVING_SCALE else 1.0f)
+
+    /**
+     * オーバーレイ非表示時など、外部からジェスチャーを強制キャンセルする。
+     * PINNED_MENU 中に applyHide() が呼ばれた場合の状態リセットに使う。
+     */
+    fun cancelGesture() {
+        longPressRunnable?.let { handler.removeCallbacks(it) }
+        longPressRunnable = null
+        singleTapRunnable?.let { handler.removeCallbacks(it) }
+        singleTapRunnable = null
+        if (isPinnedMenuOpen) {
+            isPinnedMenuOpen    = false
+            rotoOffset          = 0f
+            selectedPinnedIndex = -1
+            inCancelZone        = false
+            lastPinnedHapticIndex = -1
+        }
+        resetDragState()
+        touchState = TouchState.IDLE
+        // onDrawInvalidate は呼ばない（非表示処理中なので不要）
+    }
 
     private fun resetDragState() {
         dragX = centerX

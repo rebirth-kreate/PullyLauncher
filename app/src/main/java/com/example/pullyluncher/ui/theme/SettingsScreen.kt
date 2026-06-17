@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -37,6 +38,7 @@ import com.example.pullyluncher.data.UsageHistoryRepository
 import com.example.pullyluncher.model.AppEntry
 import com.example.pullyluncher.model.ColorPresets
 import com.example.pullyluncher.model.LauncherUiConfig
+import com.example.pullyluncher.model.SelectorPosition
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -309,6 +311,47 @@ fun SettingsScreen(
                     text  = stringResource(R.string.add_pinned_app),
                     color = Color(0xFF88C0D0)
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ---- リボルバー / Revolver ----
+        SettingSection(title = stringResource(R.string.section_revolver))
+
+        Text(
+            text  = stringResource(R.string.hint_revolver_selector_position),
+            color = Color(0xFF81A1C1),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            SelectorPosition.entries.forEach { pos ->
+                val isSelected = config.selectorPosition == pos
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (isSelected) Color(0xFF1E3A4A) else Color(0xFF1A1F2E))
+                        .border(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) Color(0xFF88C0D0) else Color(0xFF4C566A),
+                            shape = RoundedCornerShape(6.dp)
+                        )
+                        .clickable { onConfigChange(config.copy(selectorPosition = pos)) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text  = pos.displayName,
+                        color = if (isSelected) Color(0xFF88C0D0) else Color(0xFF81A1C1),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
 

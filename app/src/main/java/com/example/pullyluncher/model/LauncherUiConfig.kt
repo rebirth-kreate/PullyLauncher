@@ -30,5 +30,10 @@ data class LauncherUiConfig(
     /** ダブルタップで一時非表示にする秒数（5〜10）*/
     val temporaryHideSeconds: Int = 5,
     /** 撮影モード中は Pully を完全に非表示にする（FLAG_SECURE は使わない） */
-    val captureMode: Boolean = false
+    val captureMode: Boolean = false,
+    /**
+     * リボルバーメニューの固定選択枠の位置。
+     * デフォルト RIGHT: Pully が画面左端に配置されているため、選択枠を右側（画面内側）に向ける。
+     */
+    val selectorPosition: SelectorPosition = SelectorPosition.RIGHT
 )

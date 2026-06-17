@@ -15,6 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /** true にするとボール中心に黄色い点と十字を描く（確認用）。 */
@@ -28,6 +30,9 @@ private const val BLOB_ORIGIN_DIR_RATIO = 0.0f
  */
 internal const val BALL_MOVING_SCALE = 1.18f
 
+/** リボルバーリングの半径比率（ボール半径 × この値）。後から調整可能。 */
+private const val REVOLVER_RING_RATIO = 2.4f
+
 /**
  * 描画専用の View。MATCH_PARENT な Window に配置され、描画のみを行う。
  * タッチは一切受け取らない。
@@ -37,7 +42,7 @@ class OverlayExpandView(context: Context) : View(context) {
     /** Service が配線する。null の間は onDraw で何も描かない。 */
     var touchView: OverlayTouchView? = null
 
-    private val cfg get() = LauncherRepository.config
+    private val cfg      get() = LauncherRepository.config
     private val blobRadius get() = cfg.buttonRadiusPx
     private val appSlots get() = LauncherRepository.appSlots
 
@@ -49,9 +54,20 @@ class OverlayExpandView(context: Context) : View(context) {
         style = Paint.Style.STROKE
         strokeWidth = 2.5f
     }
-    private val nodePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val nodePaint    = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val iconPaint    = Paint(Paint.ANTI_ALIAS_FLAG)
     private val idleHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // ── リボルバー用 Paint ─────────────────────────────────────────
+    private val revolverNodePaint     = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val revolverSelectorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style       = Paint.Style.STROKE
+        strokeWidth = 3.5f
+    }
+    private val revolverTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        color     = Color.WHITE
+    }
 
     // ── ライフサイクル ─────────────────────────────────────────────
 
@@ -76,6 +92,13 @@ class OverlayExpandView(context: Context) : View(context) {
         val centerX = tv.centerX
         val centerY = tv.centerY
 
+        // V2: リボルバーメニューが開いている間は専用描画
+        if (tv.isPinnedMenuOpen) {
+            drawPinnedRevolver(canvas, centerX, centerY, tv)
+            drawDebugAnchor(canvas, centerX, centerY)
+            return
+        }
+
         if (!tv.isDragging) {
             drawIdleBall(canvas, centerX, centerY)
             drawDebugAnchor(canvas, centerX, centerY)
@@ -84,11 +107,11 @@ class OverlayExpandView(context: Context) : View(context) {
 
         val dragX = tv.dragX
         val dragY = tv.dragY
-        val isAxisReady = tv.isAxisReady
-        val axisX = tv.axisX
-        val axisY = tv.axisY
+        val isAxisReady  = tv.isAxisReady
+        val axisX        = tv.axisX
+        val axisY        = tv.axisY
         val selectedIndex = tv.selectedIndex
-        val isCancelled = tv.isCancelled
+        val isCancelled  = tv.isCancelled
 
         val relX = dragX - centerX
         val relY = dragY - centerY
@@ -98,8 +121,8 @@ class OverlayExpandView(context: Context) : View(context) {
         val rawLen: Float
 
         if (isAxisReady) {
-            rdx = axisX
-            rdy = axisY
+            rdx    = axisX
+            rdy    = axisY
             rawLen = (relX * axisX + relY * axisY).coerceAtLeast(0f)
         } else {
             val dist = sqrt(relX * relX + relY * relY)
@@ -109,8 +132,8 @@ class OverlayExpandView(context: Context) : View(context) {
                 canvas.restore()
                 return
             }
-            rdx = relX / dist
-            rdy = relY / dist
+            rdx    = relX / dist
+            rdy    = relY / dist
             rawLen = dist
         }
 
@@ -121,9 +144,9 @@ class OverlayExpandView(context: Context) : View(context) {
         val blobOriginY = centerY + rdy * blobRadius * BLOB_ORIGIN_DIR_RATIO
 
         val lastNodeDist = cfg.baseOffsetPx + (cfg.nodeCount - 1) * cfg.spacingPx
-        val maxBlobLen = lastNodeDist + cfg.nodeRadiusPx + 20f
-        val blobLen = rawLen.coerceAtMost(maxBlobLen)
-        val blobAlpha = if (isCancelled) 0.28f else 1.0f
+        val maxBlobLen   = lastNodeDist + cfg.nodeRadiusPx + 20f
+        val blobLen      = rawLen.coerceAtMost(maxBlobLen)
+        val blobAlpha    = if (isCancelled) 0.28f else 1.0f
 
         if (blobLen > 4f) {
             drawBlob(canvas, blobOriginX, blobOriginY, rdx, rdy, perpX, perpY, blobLen, blobAlpha)
@@ -132,28 +155,28 @@ class OverlayExpandView(context: Context) : View(context) {
         }
 
         if (isAxisReady) {
-            val parallel = relX * axisX + relY * axisY
+            val parallel     = relX * axisX + relY * axisY
             val nodeAlphaMult = if (isCancelled) 0.28f else 1.0f
             for (i in 0 until cfg.nodeCount) {
                 val nodeDist = cfg.baseOffsetPx + i * cfg.spacingPx
-                val reveal = revealProgress(parallel, nodeDist)
+                val reveal   = revealProgress(parallel, nodeDist)
                 if (reveal <= 0f) continue
-                val animDist = nodeDist - (1f - reveal) * cfg.nodeRevealBackOffsetPx
-                val nodeCx = blobOriginX + axisX * animDist
-                val nodeCy = blobOriginY + axisY * animDist
+                val animDist  = nodeDist - (1f - reveal) * cfg.nodeRevealBackOffsetPx
+                val nodeCx    = blobOriginX + axisX * animDist
+                val nodeCy    = blobOriginY + axisY * animDist
                 val isSelected = !isCancelled && i == selectedIndex
-                val base = cfg.nodeRadiusPx * (0.55f + 0.45f * reveal)
+                val base       = cfg.nodeRadiusPx * (0.55f + 0.45f * reveal)
                 val drawRadius = if (isSelected) base + 10f else base
-                val nodeAlpha = (reveal * nodeAlphaMult * 255).toInt().coerceIn(0, 255)
+                val nodeAlpha  = (reveal * nodeAlphaMult * 255).toInt().coerceIn(0, 255)
 
                 drawNode(canvas, nodeCx, nodeCy, drawRadius, nodeAlpha, reveal, isSelected)
 
                 val pkg = appSlots.getOrNull(i)?.pinnedApp?.packageName
-                val bm = pkg?.let { LauncherRepository.iconBitmaps[it] }
+                val bm  = pkg?.let { LauncherRepository.iconBitmaps[it] }
                 if (bm != null) {
                     val iconSize = drawRadius * 1.5f
                     val left = nodeCx - iconSize / 2f
-                    val top = nodeCy - iconSize / 2f
+                    val top  = nodeCy - iconSize / 2f
                     iconPaint.alpha = nodeAlpha
                     canvas.drawBitmap(bm, null, RectF(left, top, left + iconSize, top + iconSize), iconPaint)
                 }
@@ -163,22 +186,165 @@ class OverlayExpandView(context: Context) : View(context) {
         drawDebugAnchor(canvas, centerX, centerY)
     }
 
-    // ── 描画ヘルパー ───────────────────────────────────────────────
+    // ── V2 リボルバー描画 ─────────────────────────────────────────
+
+    private fun drawPinnedRevolver(canvas: Canvas, cx: Float, cy: Float, tv: OverlayTouchView) {
+        val pinned  = LauncherRepository.pinnedApps
+        val count   = pinned.size
+        if (count == 0) return
+
+        val preset    = ColorPresets.get(cfg.colorPreset)
+        val screenW   = width.toFloat()
+        val screenH   = height.toFloat()
+        val inCancel  = tv.inCancelZone
+
+        // リング半径を画面端で調整
+        val baseRingRadius = cfg.buttonRadiusPx * REVOLVER_RING_RATIO
+        val ringRadius = computeRevolverRadius(cx, cy, screenW, screenH, baseRingRadius)
+
+        // 選択枠の角度（設定から読む）
+        val selectorAngleDeg = cfg.selectorPosition.angleDeg
+        val selectorAngleRad = Math.toRadians(selectorAngleDeg.toDouble()).toFloat()
+
+        val angleStep = 360.0 / count
+
+        // ── キャンセル範囲グロー ────────────────────────────────────
+        val cancelRadius = cfg.buttonRadiusPx * REVOLVER_CANCEL_ZONE_RATIO
+        val cancelAlpha  = if (inCancel) 0.30f else 0.10f
+        val cancelColor  = if (inCancel) preset.nodeSelectedColor else Color.WHITE
+        val cancelGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = RadialGradient(
+                cx, cy, cancelRadius,
+                intArrayOf(applyAlphaF(cancelColor, cancelAlpha), Color.TRANSPARENT),
+                floatArrayOf(0f, 1f),
+                Shader.TileMode.CLAMP
+            )
+        }
+        canvas.drawCircle(cx, cy, cancelRadius, cancelGlowPaint)
+
+        // ── 中心ボール ──────────────────────────────────────────────
+        drawIdleBall(canvas, cx, cy)
+
+        // ── キャンセルラベル ─────────────────────────────────────────
+        if (inCancel) {
+            revolverTextPaint.textSize = cfg.buttonRadiusPx * 0.40f
+            revolverTextPaint.color    = applyAlphaF(Color.WHITE, 0.90f)
+            canvas.drawText("Cancel", cx, cy - cfg.buttonRadiusPx - 14f, revolverTextPaint)
+        }
+
+        // ── 選択枠（固定位置）────────────────────────────────────────
+        val selX       = cx + cos(selectorAngleRad) * ringRadius
+        val selY       = cy + sin(selectorAngleRad) * ringRadius
+        val selRadius  = cfg.nodeRadiusPx * 1.38f
+        revolverSelectorPaint.color       = applyAlphaF(
+            if (inCancel) Color.GRAY else preset.nodeSelectedColor,
+            if (inCancel) 0.35f else 0.90f
+        )
+        revolverSelectorPaint.strokeWidth = 3.5f
+        canvas.drawCircle(selX, selY, selRadius, revolverSelectorPaint)
+
+        // ── アイテム（回転して配置）──────────────────────────────────
+        for (i in 0 until count) {
+            val itemAngleDeg = selectorAngleDeg - (i - tv.rotoOffset) * angleStep
+            val itemAngleRad = Math.toRadians(itemAngleDeg).toFloat()
+            val itemX = cx + cos(itemAngleRad) * ringRadius
+            val itemY = cy + sin(itemAngleRad) * ringRadius
+
+            val isSelected = i == tv.selectedPinnedIndex && !inCancel
+            val dimFactor  = when {
+                inCancel   -> 0.30f
+                isSelected -> 1.00f
+                else       -> 0.65f
+            }
+            val itemAlpha  = (dimFactor * 255).toInt()
+            val drawRadius = if (isSelected) cfg.nodeRadiusPx * 1.18f else cfg.nodeRadiusPx * 0.92f
+
+            // 選択中グロー
+            if (isSelected) {
+                val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = RadialGradient(
+                        itemX, itemY, drawRadius * 2.2f,
+                        intArrayOf(applyAlphaF(preset.nodeSelectedColor, 0.35f), Color.TRANSPARENT),
+                        floatArrayOf(0f, 1f),
+                        Shader.TileMode.CLAMP
+                    )
+                }
+                canvas.drawCircle(itemX, itemY, drawRadius * 2.2f, glowPaint)
+            }
+
+            // ノード背景
+            revolverNodePaint.color = applyAlpha(
+                if (isSelected) preset.nodeSelectedColor else preset.nodeIdleColor,
+                itemAlpha
+            )
+            canvas.drawCircle(itemX, itemY, drawRadius, revolverNodePaint)
+
+            // アイコン
+            val pkg = pinned.getOrNull(i)?.packageName
+            val bm  = pkg?.let { LauncherRepository.iconBitmaps[it] }
+            if (bm != null) {
+                val iconSize = drawRadius * 1.42f
+                iconPaint.alpha = itemAlpha
+                canvas.drawBitmap(
+                    bm, null,
+                    RectF(
+                        itemX - iconSize / 2f, itemY - iconSize / 2f,
+                        itemX + iconSize / 2f, itemY + iconSize / 2f
+                    ),
+                    iconPaint
+                )
+            }
+        }
+
+        // ── 選択中アプリ名 ─────────────────────────────────────────
+        if (!inCancel && tv.selectedPinnedIndex in pinned.indices) {
+            val label = pinned[tv.selectedPinnedIndex].label
+            revolverTextPaint.textSize = (cfg.buttonRadiusPx * 0.36f).coerceIn(24f, 44f)
+            revolverTextPaint.color    = applyAlphaF(Color.WHITE, 0.92f)
+            // ボール直下（または直上）にアプリ名を表示
+            val textY = if (cy + cfg.buttonRadiusPx + 52f + revolverTextPaint.textSize < screenH) {
+                cy + cfg.buttonRadiusPx + 52f
+            } else {
+                cy - cfg.buttonRadiusPx - 24f
+            }
+            val textX = cx.coerceIn(120f, screenW - 120f)
+            canvas.drawText(label, textX, textY, revolverTextPaint)
+        }
+    }
+
+    /**
+     * リボルバーリング半径を画面端に合わせて縮小する。
+     * アイコンが画面外に大きくはみ出さないようにする。
+     */
+    private fun computeRevolverRadius(
+        cx: Float, cy: Float, screenW: Float, screenH: Float, base: Float
+    ): Float {
+        val margin = cfg.nodeRadiusPx * 1.2f + 8f
+        val maxAllowed = minOf(
+            cx - margin,
+            screenW - cx - margin,
+            cy - margin,
+            screenH - cy - margin
+        )
+        return base.coerceAtMost(maxAllowed.coerceAtLeast(base * 0.45f))
+    }
+
+    // ── 共通描画ヘルパー ──────────────────────────────────────────
 
     private fun drawIdleBall(canvas: Canvas, cx: Float, cy: Float) {
         val tv = touchView ?: return
         val isMoving = tv.isMoving
-        val r = tv.getCurrentVisualRadius()   // 唯一の正解関数を参照
+        val r = tv.getCurrentVisualRadius()
 
         val preset = ColorPresets.get(cfg.colorPreset)
-        val alpha = cfg.ballAlpha
+        val alpha  = cfg.ballAlpha
 
         blobFillPaint.shader = null
-        blobFillPaint.color = applyAlphaF(preset.buttonColor, alpha * (if (isMoving) 0.82f else 1.0f))
+        blobFillPaint.color  = applyAlphaF(preset.buttonColor, alpha * (if (isMoving) 0.82f else 1.0f))
         canvas.drawCircle(cx, cy, r, blobFillPaint)
 
         val hlRadius = r * 0.62f
-        val hlCy = cy - r * 0.22f
+        val hlCy     = cy - r * 0.22f
         idleHighlightPaint.shader = RadialGradient(
             cx, hlCy, hlRadius,
             intArrayOf(applyAlphaF(Color.WHITE, 0.2f * alpha), Color.TRANSPARENT),
@@ -223,16 +389,16 @@ class OverlayExpandView(context: Context) : View(context) {
         blobLen: Float,
         blobAlpha: Float
     ) {
-        val r = blobRadius
+        val r      = blobRadius
         val preset = ColorPresets.get(cfg.colorPreset)
-        val path = buildBlobPath(originX, originY, rdx, rdy, perpX, perpY, blobLen)
+        val path   = buildBlobPath(originX, originY, rdx, rdy, perpX, perpY, blobLen)
 
         blobStrokePaint.color = applyAlphaF(preset.blobStrokeColor, 0.55f * blobAlpha)
         canvas.drawPath(path, blobStrokePaint)
 
         val tipHalf = r * 0.98f
-        val topX = originX - rdx * r
-        val topY = originY - rdy * r
+        val topX    = originX - rdx * r
+        val topY    = originY - rdy * r
         val tipMidX = originX + rdx * (blobLen + tipHalf)
         val tipMidY = originY + rdy * (blobLen + tipHalf)
 
@@ -249,8 +415,8 @@ class OverlayExpandView(context: Context) : View(context) {
         canvas.drawPath(path, blobFillPaint)
         blobFillPaint.shader = null
 
-        val glowCx = originX - rdx * (r * 0.28f)
-        val glowCy = originY - rdy * (r * 0.28f)
+        val glowCx     = originX - rdx * (r * 0.28f)
+        val glowCy     = originY - rdy * (r * 0.28f)
         val glowRadius = r * 0.75f
         val hlPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             shader = RadialGradient(
@@ -305,17 +471,17 @@ class OverlayExpandView(context: Context) : View(context) {
         perpY: Float,
         rawLen: Float
     ): android.graphics.Path {
-        val r = blobRadius
+        val r       = blobRadius
         val tipHalf = r * 0.98f
-        val k = 0.5523f
-        val kr = r * k
+        val k       = 0.5523f
+        val kr      = r * k
 
-        val topX = cx - rdx * r
-        val topY = cy - rdy * r
-        val lEqX = cx - perpX * r
-        val lEqY = cy - perpY * r
-        val rEqX = cx + perpX * r
-        val rEqY = cy + perpY * r
+        val topX  = cx - rdx * r
+        val topY  = cy - rdy * r
+        val lEqX  = cx - perpX * r
+        val lEqY  = cy - perpY * r
+        val rEqX  = cx + perpX * r
+        val rEqY  = cy + perpY * r
         val lTipX = cx + rdx * rawLen - perpX * tipHalf
         val lTipY = cy + rdy * rawLen - perpY * tipHalf
         val rTipX = cx + rdx * rawLen + perpX * tipHalf
@@ -332,15 +498,15 @@ class OverlayExpandView(context: Context) : View(context) {
         val lCp2x = lEqX + rdx * (rawLen * 0.72f)
         val lCp2y = lEqY + rdy * (rawLen * 0.72f)
 
-        val tipK = tipHalf * k
-        val tR1x = rTipX + rdx * tipK
-        val tR1y = rTipY + rdy * tipK
-        val tR2x = tMidX + perpX * tipK
-        val tR2y = tMidY + perpY * tipK
-        val tL1x = tMidX - perpX * tipK
-        val tL1y = tMidY - perpY * tipK
-        val tL2x = lTipX + rdx * tipK
-        val tL2y = lTipY + rdy * tipK
+        val tipK  = tipHalf * k
+        val tR1x  = rTipX + rdx * tipK
+        val tR1y  = rTipY + rdy * tipK
+        val tR2x  = tMidX + perpX * tipK
+        val tR2y  = tMidY + perpY * tipK
+        val tL1x  = tMidX - perpX * tipK
+        val tL1y  = tMidY - perpY * tipK
+        val tL2x  = lTipX + rdx * tipK
+        val tL2y  = lTipY + rdy * tipK
 
         return android.graphics.Path().apply {
             moveTo(lEqX, lEqY)

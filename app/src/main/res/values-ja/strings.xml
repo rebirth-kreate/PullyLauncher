@@ -51,8 +51,12 @@
     <string name="color_section_description">ボール・ブロブ・ノードの配色を選択します。</string>
 
     <!-- ── 固定アプリ ── -->
-    <string name="pinned_apps_description">先頭に固定表示するアプリを設定します。残りの枠は使用履歴で埋まります。</string>
+    <string name="pinned_apps_description">引き出しメニューの先頭に固定するアプリです。長押しリボルバーメニューにも表示されます。</string>
     <string name="add_pinned_app">＋ 固定アプリを追加</string>
+
+    <!-- ── リボルバー ── -->
+    <string name="section_revolver">リボルバーメニュー</string>
+    <string name="hint_revolver_selector_position">リボルバーリング上の選択枠の位置です。Pullyを長押しするとメニューが開き、指を上下に動かすとアプリが回転します。</string>
 
     <!-- ── 使用履歴 ── -->
     <string name="usage_history_enabled">最近使ったアプリ順に表示します。</string>

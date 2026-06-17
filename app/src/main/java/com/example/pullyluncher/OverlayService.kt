@@ -305,6 +305,7 @@ class OverlayService : Service() {
         }
         touch.onGoHome                 = { goHome() }
         touch.onLaunchApp              = { pkg -> launchApp(pkg) }
+        touch.onLaunchPinnedApp        = { pkg -> launchApp(pkg) }
         touch.onHapticFeedback         = { performHaptic() }
         touch.onDrawInvalidate         = { draw.invalidate() }
         touch.onDoubleTapTemporaryHide = { temporarilyHideOverlay() }
@@ -425,6 +426,7 @@ class OverlayService : Service() {
         val dv = drawView ?: return
         val tv = touchView ?: return
 
+        tv.cancelGesture()  // PINNED_MENU 中に非表示になった場合の状態リセット
         tv.isEnabled = false
 
         dv.animate().cancel()

@@ -52,8 +52,12 @@
     <string name="color_section_description">Select the color scheme for ball, blob, and nodes.</string>
 
     <!-- ── 固定アプリ ── -->
-    <string name="pinned_apps_description">Apps pinned to the top. Remaining slots are filled with recent apps.</string>
+    <string name="pinned_apps_description">Apps pinned to the top of the pull menu. Also appear in the long-press revolver menu.</string>
     <string name="add_pinned_app">+ Add Pinned App</string>
+
+    <!-- ── リボルバー ── -->
+    <string name="section_revolver">Revolver Menu</string>
+    <string name="hint_revolver_selector_position">Position of the fixed selection cursor on the revolver ring. Long-press Pully to open the menu, then slide up/down to rotate.</string>
 
     <!-- ── 使用履歴 ── -->
     <string name="usage_history_enabled">Apps are sorted by recent usage.</string>
