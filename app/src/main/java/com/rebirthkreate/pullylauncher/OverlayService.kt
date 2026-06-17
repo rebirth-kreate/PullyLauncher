@@ -22,6 +22,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import com.rebirthkreate.pullylauncher.BuildConfig
+import com.rebirthkreate.pullylauncher.data.OverlayPositionPrefs
 import com.rebirthkreate.pullylauncher.data.UiConfigPrefs
 import com.rebirthkreate.pullylauncher.data.UsageHistoryRepository
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +32,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /**
  * フローティング UI を管理するフォアグラウンドサービス。
@@ -81,11 +83,13 @@ class OverlayService : Service() {
         var isRunning: Boolean = false
             private set
 
-        private const val CHANNEL_ID      = "pully_overlay_channel"
-        private const val NOTIF_ID        = 1001
-        private const val STARTUP_TAG     = "PullyStartup"
-        private const val VISIBILITY_TAG  = "PullyVisibility"
-        private const val APPS_TAG        = "PullyApps"
+        private const val CHANNEL_ID        = "pully_overlay_channel"
+        private const val NOTIF_ID          = 1001
+        private const val STARTUP_TAG       = "PullyStartup"
+        private const val VISIBILITY_TAG    = "PullyVisibility"
+        private const val APPS_TAG          = "PullyApps"
+        /** 表示切替フェードアニメーションの長さ（ミリ秒）。 */
+        private const val FADE_DURATION_MS  = 150L
 
         /** UsageStats ポーリング間隔（画面点灯中）。Galaxy 実機テスト後に調整可。 */
         const val POLL_INTERVAL_MS = 850L
@@ -126,11 +130,23 @@ class OverlayService : Service() {
         LauncherRepository.config = UiConfigPrefs.load(this)
         LauncherRepository.loadAppsIfNeeded(this)
 
-        // 初期ボール位置: 左上から 16dp・200dp の位置にボール中心を置く
-        val density = resources.displayMetrics.density
-        val r       = LauncherRepository.config.buttonRadiusPx
-        savedCenterX = (16 * density) + r
-        savedCenterY = (200 * density) + r
+        // 初期ボール位置: 左上から 16dp・200dp の位置をデフォルトとし、
+        // 保存済み位置があればそちらを優先して復元する（画面外クランプ付き）。
+        val dm       = resources.displayMetrics
+        val density  = dm.density
+        val r        = LauncherRepository.config.buttonRadiusPx
+        val defaultX = (16 * density) + r
+        val defaultY = (200 * density) + r
+        val (restoredX, restoredY) = OverlayPositionPrefs.load(
+            context  = this,
+            defaultX = defaultX,
+            defaultY = defaultY,
+            ballRadius = r,
+            screenW  = dm.widthPixels.toFloat(),
+            screenH  = dm.heightPixels.toFloat(),
+        )
+        savedCenterX = restoredX
+        savedCenterY = restoredY
 
         serviceScope.launch {
             LauncherRepository.configFlow.collect { onConfigUpdated() }
@@ -183,19 +199,24 @@ class OverlayService : Service() {
             // ── touch Window（ボールサイズ・タッチ可能）──────────────────
             // 視覚ボール半径と完全一致させる（倍率なし）
             val touchRadius = cfg.buttonRadiusPx
-            val size = (touchRadius * 2f).toInt()
+            val size = (touchRadius * 2f).roundToInt()
             touchWindowSize = size
 
             val touch = OverlayTouchView(this, savedCenterX, savedCenterY)
             val tParams = WindowManager.LayoutParams(
                 size, size,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or secureFlag,
+                // FLAG_NOT_TOUCH_MODAL: ボール外のタッチを背後のウィンドウへ透過させる。
+                // これがないと、円形ヒットテストで return false しても
+                // 他アプリのポップアップ等がタッチを受け取れない。
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        secureFlag,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = (savedCenterX - touchRadius).toInt()
-                y = (savedCenterY - touchRadius).toInt()
+                x = (savedCenterX - touchRadius).roundToInt()
+                y = (savedCenterY - touchRadius).roundToInt()
             }
             touchParams = tParams
 
@@ -209,6 +230,8 @@ class OverlayService : Service() {
             touch.onPositionChanged = { cx, cy ->
                 savedCenterX = cx
                 savedCenterY = cy
+                // 指を離したタイミングで位置を永続化する（移動中は保存しない）
+                OverlayPositionPrefs.save(applicationContext, cx, cy)
             }
             touch.onMoveStateChanged = { isMoving ->
                 // MOVING 中はボールが BALL_MOVING_SCALE 倍に拡大するので touch Window も合わせる
@@ -257,8 +280,8 @@ class OverlayService : Service() {
     private fun moveTouchWindow(cx: Float, cy: Float) {
         val params = touchParams ?: return
         val half = touchWindowSize / 2f
-        params.x = (cx - half).toInt()
-        params.y = (cy - half).toInt()
+        params.x = (cx - half).roundToInt()
+        params.y = (cy - half).roundToInt()
         try {
             touchView?.let { windowManager.updateViewLayout(it, params) }
         } catch (_: Exception) {}
@@ -270,13 +293,13 @@ class OverlayService : Service() {
      */
     private fun resizeTouchWindow(radius: Float) {
         val params = touchParams ?: return
-        val newSize = (radius * 2f).toInt()
+        val newSize = (radius * 2f).roundToInt()
         if (touchWindowSize == newSize) return
         touchWindowSize = newSize
         params.width  = newSize
         params.height = newSize
-        params.x = (savedCenterX - radius).toInt()
-        params.y = (savedCenterY - radius).toInt()
+        params.x = (savedCenterX - radius).roundToInt()
+        params.y = (savedCenterY - radius).roundToInt()
         try {
             touchView?.let { windowManager.updateViewLayout(it, params) }
         } catch (_: Exception) {}
@@ -312,19 +335,64 @@ class OverlayService : Service() {
     // ── ボール可視制御 ─────────────────────────────────────────────
 
     private fun applyBallVisibility() {
-        val hidden    = LauncherRepository.config.hiddenPackages
-        val fg        = LauncherRepository.currentForegroundPackage
-        val hasPerms  = UsageHistoryRepository.hasPermission(this)
+        val hidden     = LauncherRepository.config.hiddenPackages
+        val fg         = LauncherRepository.currentForegroundPackage
+        val hasPerms   = UsageHistoryRepository.hasPermission(this)
         val shouldHide = hidden.isNotEmpty() && fg != null && fg in hidden
-        val newVis    = if (shouldHide) View.INVISIBLE else View.VISIBLE
 
         if (BuildConfig.DEBUG) {
             Log.d(VISIBILITY_TAG, "[UsageStats] fg=$fg")
             Log.d(VISIBILITY_TAG, "hidden=${hidden.isNotEmpty()} match=$shouldHide result=${if (shouldHide) "HIDE" else "SHOW"} permission=$hasPerms")
         }
 
-        drawView?.let  { if (it.visibility != newVis) it.visibility = newVis }
-        touchView?.let { if (it.visibility != newVis) it.visibility = newVis }
+        if (shouldHide) hideOverlay() else showOverlay()
+    }
+
+    /**
+     * オーバーレイをフェードアウトで非表示にする。
+     * すでに非表示（INVISIBLE）、またはフェードアウト中であれば何もしない。
+     *
+     * withEndAction 内で alpha を再確認することで、アニメーション途中に
+     * showOverlay() が呼ばれた場合でも誤って INVISIBLE にしてしまう競合を防ぐ。
+     */
+    private fun hideOverlay() {
+        if (drawView?.visibility == View.INVISIBLE) return
+        if ((drawView?.alpha ?: 1f) <= 0f) return
+
+        drawView?.animate()
+            ?.alpha(0f)
+            ?.setDuration(FADE_DURATION_MS)
+            ?.withEndAction {
+                if ((drawView?.alpha ?: 1f) < 0.01f) drawView?.visibility = View.INVISIBLE
+            }
+        touchView?.animate()
+            ?.alpha(0f)
+            ?.setDuration(FADE_DURATION_MS)
+            ?.withEndAction {
+                if ((touchView?.alpha ?: 1f) < 0.01f) touchView?.visibility = View.INVISIBLE
+            }
+    }
+
+    /**
+     * オーバーレイをフェードインで表示する。
+     * すでに完全表示（VISIBLE かつ alpha == 1f）なら何もしない。
+     *
+     * hideOverlay() のアニメーション途中に呼ばれた場合は VISIBLE のままなので
+     * alpha を 0f にリセットせず、現在値から逆方向アニメーションを開始する。
+     */
+    private fun showOverlay() {
+        if (drawView?.visibility == View.VISIBLE && (drawView?.alpha ?: 0f) >= 1f) return
+
+        if (drawView?.visibility != View.VISIBLE) {
+            drawView?.alpha = 0f
+            drawView?.visibility = View.VISIBLE
+        }
+        if (touchView?.visibility != View.VISIBLE) {
+            touchView?.alpha = 0f
+            touchView?.visibility = View.VISIBLE
+        }
+        drawView?.animate()?.alpha(1f)?.setDuration(FADE_DURATION_MS)
+        touchView?.animate()?.alpha(1f)?.setDuration(FADE_DURATION_MS)
     }
 
     /** secureOverlay 設定に合わせて両 Window の FLAG_SECURE を動的に更新する。 */
