@@ -42,14 +42,15 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PullyLuncherTheme {
-                PullyLuncherApp(
+                // アプリを開いたら直接設定画面を表示する
+                SettingsScreen(
                     config               = config.value,
                     onConfigChange       = {
                         config.value = it
-                        LauncherRepository.config = it  // フローティング側にも即時反映
+                        LauncherRepository.config = it
                         UiConfigPrefs.save(this@MainActivity, it)
                     },
-                    historyRefreshNonce  = historyRefreshNonce.intValue,
+                    onClose              = { finish() },
                     hasOverlayPermission = hasOverlayPermission.value,
                     isOverlayRunning     = isOverlayRunning.value,
                     onRequestPermission  = ::requestOverlayPermission,

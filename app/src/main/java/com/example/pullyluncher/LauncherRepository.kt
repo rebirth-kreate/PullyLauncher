@@ -110,7 +110,9 @@ object LauncherRepository {
         if (allApps.isNotEmpty()) {
             allApps = UsageHistoryRepository.reorderByUsage(context, allApps)
         }
-        currentForegroundPackage = UsageHistoryRepository.getForegroundPackage(context)
+        // currentForegroundPackage は ForegroundAppService が即時・正確に管理する。
+        // UsageStatsManager は最大数十秒の遅延があるため、ここでは上書きしない。
+        // 上書きすると「非表示アプリ離脱後も古い値で hide が継続する」バグが発生する。
     }
 
     /** refreshHistory の非 suspend ラッパー（Service など非コルーチンコンテキスト用）。 */

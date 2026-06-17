@@ -26,5 +26,7 @@ data class LauncherUiConfig(
     /** メインボールの不透明度（0.3〜1.0）*/
     val ballAlpha: Float = 1.0f,
     /** フローティングボールを非表示にするアプリの packageName リスト */
-    val hiddenPackages: List<String> = emptyList()
+    val hiddenPackages: List<String> = emptyList(),
+    /** ダブルタップで一時非表示にする秒数（5〜10）*/
+    val temporaryHideSeconds: Int = 5
 )

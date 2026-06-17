@@ -3,13 +3,28 @@ package com.example.pullyluncher
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-private const val LONG_PRESS_MS = 500L
-private const val MOVE_CANCEL_PX = 28
+private const val LONG_PRESS_MS   = 500L
+private const val MOVE_CANCEL_PX  = 28
+/**
+ * ダブルタップと判定する最大間隔（ミリ秒）。
+ * 1回目のタップ離し → 2回目のタップ離しまでの時間がこれ以内ならダブルタップ。
+ * シングルタップの goHome もこの時間だけ遅延して発火する。
+ * 調整可能: 250〜350ms。
+ */
+private const val DOUBLE_TAP_MS   = 300L
+/**
+ * 円形ヒットテストのマージン（px）。
+ * 視覚半径からこの値だけ縮めることで、Window 端の toInt() 誤差と
+ * 描画アンチエイリアス領域への誤タップを防ぐ。
+ * 調整可能: 2f〜4f。大きいほど厳しくなる。
+ */
+private const val HIT_MARGIN = 2f
 
 /**
  * ドラッグ方向スムージング係数（ボール内のみ有効）。
@@ -96,6 +111,10 @@ class OverlayTouchView(
 
     private val handler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
+    /** シングルタップ確定後に goHome を遅延発火する Runnable。ダブルタップ検出時にキャンセルする。 */
+    private var singleTapRunnable: Runnable? = null
+    /** 直前のタップ離し時刻（DOUBLE_TAP_MS 以内に次のタップが来たらダブルタップ）。 */
+    private var lastTapUpTime = 0L
 
     // ── コールバック ───────────────────────────────────────────────
     /** ボール移動中/移動確定時。Service はウィンドウ位置更新 + 描画更新に使う。 */
@@ -114,6 +133,11 @@ class OverlayTouchView(
      *   false → MOVING 終了（通常サイズに戻る）
      */
     var onMoveStateChanged: ((isMoving: Boolean) -> Unit)? = null
+    /**
+     * ダブルタップ検出時に通知する。
+     * Service は設定秒数だけオーバーレイを一時非表示にする。
+     */
+    var onDoubleTapTemporaryHide: (() -> Unit)? = null
 
     // ── タッチイベント ─────────────────────────────────────────────
 
@@ -126,9 +150,11 @@ class OverlayTouchView(
                 // ── 円形ヒットテスト ──────────────────────────────────────────
                 // touch Window は正方形なので、角への誤タップを防ぐために
                 // ローカル座標で視覚円の内側かを判定する。
-                val lx = event.x - width / 2f
-                val ly = event.y - height / 2f
-                val hitR = currentVisualRadius()
+                // width * 0.5f で整数除算の誤差を排除し、円中心を厳密化
+                val lx = event.x - width * 0.5f
+                val ly = event.y - height * 0.5f
+                // -2f: Window 端の toInt() 切り捨て誤差分を吸収して角の誤タップを防ぐ
+                val hitR = getCurrentVisualRadius() - HIT_MARGIN
                 if (lx * lx + ly * ly > hitR * hitR) return false
 
                 touchDownX = rawX
@@ -188,9 +214,30 @@ class OverlayTouchView(
                         onDrawInvalidate?.invoke()
                     }
                     TouchState.PRESSING -> {
-                        touchState = TouchState.IDLE
-                        onDrawInvalidate?.invoke()
-                        onGoHome?.invoke()
+                        val now = SystemClock.elapsedRealtime()
+                        val sinceLastTap = now - lastTapUpTime
+                        if (lastTapUpTime > 0L && sinceLastTap <= DOUBLE_TAP_MS) {
+                            // ── ダブルタップ確定 ────────────────────────────────────────
+                            // 保留中の goHome をキャンセルして一時非表示を発火する
+                            singleTapRunnable?.let { handler.removeCallbacks(it) }
+                            singleTapRunnable = null
+                            lastTapUpTime = 0L
+                            touchState = TouchState.IDLE
+                            onDrawInvalidate?.invoke()
+                            onDoubleTapTemporaryHide?.invoke()
+                        } else {
+                            // ── シングルタップ候補 ──────────────────────────────────────
+                            // DOUBLE_TAP_MS 後にダブルタップが来なければ goHome を発火する
+                            lastTapUpTime = now
+                            touchState = TouchState.IDLE
+                            onDrawInvalidate?.invoke()
+                            val r = Runnable {
+                                singleTapRunnable = null
+                                onGoHome?.invoke()
+                            }
+                            singleTapRunnable = r
+                            handler.postDelayed(r, DOUBLE_TAP_MS)
+                        }
                     }
                     TouchState.IDLE -> return false
                 }
@@ -216,6 +263,9 @@ class OverlayTouchView(
     private fun startDragMode(rawX: Float, rawY: Float) {
         longPressRunnable?.let { handler.removeCallbacks(it) }
         longPressRunnable = null
+        // ドラッグ開始時に保留中の goHome もキャンセルする
+        singleTapRunnable?.let { handler.removeCallbacks(it) }
+        singleTapRunnable = null
         touchState = TouchState.DRAGGING
         dragX = centerX
         dragY = centerY
@@ -287,10 +337,16 @@ class OverlayTouchView(
     }
 
     /**
-     * 現在の視覚ボール半径を返す。
-     * OverlayExpandView.drawIdleBall と完全に同じ式を使い、描画と当たり判定を一致させる。
+     * 現在の視覚ボール半径を返す唯一の正解関数。
+     *
+     * ・OverlayExpandView.drawIdleBall と完全に同じ式
+     * ・OverlayService が touchWindow サイズに使う
+     * ・ACTION_DOWN の hit 判定がここから HIT_MARGIN を引く
+     *
+     * IDLE / MOVING のどちらの状態でも呼べる。
+     * 状態変化後に呼べば必ず正しいサイズを返す。
      */
-    private fun currentVisualRadius(): Float =
+    fun getCurrentVisualRadius(): Float =
         LauncherRepository.config.buttonRadiusPx * (if (isMoving) BALL_MOVING_SCALE else 1.0f)
 
     private fun resetDragState() {
@@ -351,5 +407,6 @@ class OverlayTouchView(
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         longPressRunnable?.let { handler.removeCallbacks(it) }
+        singleTapRunnable?.let { handler.removeCallbacks(it) }
     }
 }

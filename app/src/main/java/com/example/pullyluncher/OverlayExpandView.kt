@@ -84,7 +84,7 @@ class OverlayExpandView(context: Context) : View(context) {
         val centerY = tv.centerY
 
         if (!tv.isDragging) {
-            drawIdleBall(canvas, centerX, centerY, tv.isMoving)
+            drawIdleBall(canvas, centerX, centerY)
             drawDebugAnchor(canvas, centerX, centerY)
             return
         }
@@ -111,7 +111,7 @@ class OverlayExpandView(context: Context) : View(context) {
         } else {
             val dist = sqrt(relX * relX + relY * relY)
             if (dist <= 0.5f) {
-                drawIdleBall(canvas, centerX, centerY, false)
+                drawIdleBall(canvas, centerX, centerY)
                 drawDebugAnchor(canvas, centerX, centerY)
                 return
             }
@@ -134,7 +134,7 @@ class OverlayExpandView(context: Context) : View(context) {
         if (blobLen > 4f) {
             drawBlob(canvas, blobOriginX, blobOriginY, rdx, rdy, perpX, perpY, blobLen, blobAlpha)
         } else {
-            drawIdleBall(canvas, centerX, centerY, false)
+            drawIdleBall(canvas, centerX, centerY)
         }
 
         if (isAxisReady) {
@@ -171,10 +171,13 @@ class OverlayExpandView(context: Context) : View(context) {
 
     // ── 描画ヘルパー ───────────────────────────────────────────────
 
-    private fun drawIdleBall(canvas: Canvas, cx: Float, cy: Float, isMoving: Boolean) {
+    private fun drawIdleBall(canvas: Canvas, cx: Float, cy: Float) {
+        val tv = touchView ?: return
+        val isMoving = tv.isMoving
+        val r = tv.getCurrentVisualRadius()   // 唯一の正解関数を参照
+
         val preset = ColorPresets.get(cfg.colorPreset)
         val alpha = cfg.ballAlpha
-        val r = blobRadius * (if (isMoving) BALL_MOVING_SCALE else 1.0f)
 
         blobFillPaint.shader = null
         blobFillPaint.color = applyAlphaF(preset.buttonColor, alpha * (if (isMoving) 0.82f else 1.0f))
