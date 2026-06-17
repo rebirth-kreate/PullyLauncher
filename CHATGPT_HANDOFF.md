@@ -1,7 +1,7 @@
 # PullyLauncher-V1-Windows — ChatGPT Handoff
 
 > Branch: `fix/v1-hidden-apps-secure-overlay`
-> HEAD: `(uncommitted — settings screen UI improvements, see section 6-A)` ← 次コミット後に更新
+> HEAD: `e102d80` (pushed to origin)
 > Base: `origin/recovery/mac-latest-20260617`
 > Date: 2026-06-17
 > Status: **BUILD SUCCESSFUL, LINT CLEAN — Galaxy device testing pending**
@@ -203,7 +203,7 @@ Pull 側の設定（nodeRadiusPx, spacingPx 等）には一切影響しない。
 
 ファイル: `app/src/main/java/com/example/pullyluncher/ui/theme/SettingsScreen.kt`
 
-### 6-A. 本コミットの変更内容（2026-06-17）
+### 6-A. 本コミットの変更内容（e102d80 — 2026-06-17/18）
 
 変更ファイル: `SettingsScreen.kt` のみ。V1 Pull ロジック / V2 Revolver ロジック / overlay / UiConfig に変更なし。
 
@@ -448,7 +448,7 @@ private val DangerColor   = Color(0xFFBF5A5A)  // 赤（リセット/削除）
 ## 11. ビルド結果
 
 ```
-(本コミット — 設定UI改善)    — assembleDebug SUCCESSFUL,  lintDebug CLEAN  ← @OptIn(ExperimentalMaterial3Api) 追加で解決
+e102d80 (設定UI改善)         — assembleDebug SUCCESSFUL,  lintDebug CLEAN  ← @OptIn(ExperimentalMaterial3Api) 追加で解決
 6b74aa3 (設定画面リデザイン) — assembleDebug SUCCESSFUL,  lintDebug CLEAN
 22edc98 (V2 設定・描画改良)  — assembleDebug SUCCESSFUL,  lintDebug CLEAN
 601e6c2 (V2 UX 調整)         — assembleDebug SUCCESSFUL,  lintDebug CLEAN
