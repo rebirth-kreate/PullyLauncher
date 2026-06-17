@@ -69,7 +69,7 @@ object LauncherRepository {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    const val MAX_PINS    = 8
+    const val MAX_PINS    = 16
     private const val ICON_PX = 96
 
     // ── スロット計算 ────────────────────────────────────────────────
