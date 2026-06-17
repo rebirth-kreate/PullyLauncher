@@ -6,235 +6,218 @@
 
 ## 今回の目的
 
-「PullyLauncherを起動すると、画面が一瞬表示されたあと、すぐに終了してホーム画面へ戻ってしまいます」の根本原因特定と修正（エミュレーター実機確認済み）。
+Mac版（commit 712d16e / origin/recovery/mac-latest-20260617）で実装されていた機能を、現行 main（7d78a93）へ移植する。
+作業ブランチ: `integration/mac-features-20260617`
+
+Mac版はパッケージ `com.example.pullyluncher`、現行 main は `com.rebirthkreate.pullylauncher` のため cherry-pick・merge 禁止。
+必要な機能のみコードを読んで再実装した。
 
 ---
 
-## デバッガー切断 vs プロセス終了の判定
+## 完了したこと
 
-**プロセス終了（クラッシュ）でした。**
+### 実装した5つの機能（各コミット済み）
 
-```
-adb shell pidof com.rebirthkreate.pullylauncher
-→ '' (空)  ← 修正前
-→ '22562'  ← 修正後、5秒・10秒後も生存
-```
-
----
-
-## 実際の例外全文
-
-```
-06-16 15:10:09.608  E AndroidRuntime: FATAL EXCEPTION: main
-06-16 15:10:09.608  E AndroidRuntime: Process: com.rebirthkreate.pullylauncher, PID: 22116
-06-16 15:10:09.608  E AndroidRuntime: java.lang.RuntimeException: Unable to instantiate activity
-    ComponentInfo{com.rebirthkreate.pullylauncher/com.rebirthkreate.pullylauncher.MainActivity}
-06-16 15:10:09.608  E AndroidRuntime: Caused by: java.lang.ClassNotFoundException:
-    Didn't find class "com.rebirthkreate.pullylauncher.MainActivity" on path:
-    DexPathList[[zip file ".../base.apk"], nativeLibraryDirectories=[.../x86_64, ...]]
-06-16 15:10:09.613  W ActivityTaskManager: Force finishing activity
-    com.rebirthkreate.pullylauncher/.MainActivity
-```
-
----
-
-## 前回の ConcurrentModificationException 修正について
-
-**有効性が未確認のまま終わっていた**（Kotlinが全くコンパイルされていなかったため、前回修正コードも DEX に存在していなかった）。
-
----
-
-## 本当の根本原因
-
-**`org.jetbrains.kotlin.android` プラグインが初回コミットから一度も適用されていなかった。**
-
-| 問題点 | 詳細 |
+| コミット | 内容 |
 |---|---|
-| 欠けていたプラグイン | `org.jetbrains.kotlin.android` |
-| 存在していたプラグイン | `org.jetbrains.kotlin.plugin.compose`（Compose compiler addon のみ） |
-| 影響 | Kotlinソースファイルが**一切コンパイルされない** |
-| APKの内容 | Rクラス（javac生成）＋サードパーティライブラリのDEXのみ |
-| クラッシュ | `ClassNotFoundException: MainActivity` が起動直後に発生 |
+| `deac048` | feat: restore overlay position persistence |
+| `5914e26` | fix: persist complete launcher UI configuration |
+| `40e0588` | fix: restore safe overlay touch and hit testing behavior |
+| `810081b` | feat: restore localized settings resources |
+| `793bb07` | feat: restore independent overlay fade transitions |
 
-**なぜビルドが「SUCCESSFUL」だったか**:
-- AGPはKotlinプラグインがなくてもエラーを出さない（Kotlinファイルを無視するだけ）
-- `BuildConfig` の未解決参照エラーも Kotlin コンパイルタスク自体が存在しないため表示されなかった
-- Rクラス（Java）はAGPのリソースパイプラインで別途コンパイルされるためDEXに含まれていた
+加えて `2574694 docs: revise Mac feature migration plan` でマイグレーション計画書を作成した。
 
-**なぜ「一瞬表示」されていたか**:
-Android Studio の起動コマンドに含まれる `--splashscreen-show-icon` でスプラッシュ画面（アプリアイコン）が一瞬表示されてから `ClassNotFoundException` で即クラッシュしていた。
-
----
-
-## 問題のファイルと行
-
-| ファイル | 問題 |
-|---|---|
-| `gradle/libs.versions.toml` | `[plugins]` に `kotlin-android` が未定義 |
-| `build.gradle.kts`（ルート） | `kotlin-android` の宣言なし |
-| `app/build.gradle.kts` | `alias(libs.plugins.kotlin.android)` 未適用 / `kotlinOptions` 未設定 / `buildConfig = true` 未設定 |
-
----
-
-## 修正内容
-
-### `gradle/libs.versions.toml`
-
-```toml
-[plugins]
-android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }  # ← 追加
-kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-```
-
-### `build.gradle.kts`（ルート）
-
-```kotlin
-plugins {
-    alias(libs.plugins.android.application) apply false
-    alias(libs.plugins.kotlin.android) apply false  // ← 追加
-    alias(libs.plugins.kotlin.compose) apply false
-}
-```
-
-### `app/build.gradle.kts`
-
-```kotlin
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)   // ← 追加：Kotlinコンパイル有効化
-    alias(libs.plugins.kotlin.compose)
-}
-
-android {
-    // ...
-    compileOptions { ... }
-    kotlinOptions { jvmTarget = "11" }  // ← 追加
-    buildFeatures {
-        compose = true
-        buildConfig = true  // ← 追加：BuildConfigクラス生成
-    }
-}
-```
-
----
-
-## エミュレーター実機確認結果
-
-テスト環境: Pixel 9a エミュレーター (API 35, x86_64)
-
-### 上書きインストール（`adb install -r`）
+### ビルド・Lint 確認済み
 
 ```
-Status: ok  LaunchState: COLD  TotalTime: 1675  WaitTime: 1681
-PID at 5s:  '22562'   ← 生存
-PID at 10s: '22562'   ← 生存
-PullyStartup: MainActivity onCreate overlay=false service=false
-PullyStartup: MainActivity onStart
-PullyStartup: MainActivity onResume overlay=false service=false appsLoaded=0
-PullyApps: loadAll start thread=DefaultDispatcher-worker-1
-PullyApps: loadAll done appCount=19 iconCount=19
-FATAL EXCEPTION: なし
-onDestroy finishing=true: なし
-```
-
-### クリーンインストール（`adb uninstall` → `adb install`）
-
-```
-Status: ok  LaunchState: COLD  TotalTime: 1782  WaitTime: 1789
-PID at 8s: '22914'   ← 生存
-PullyStartup: MainActivity onCreate overlay=false service=false
-PullyStartup: MainActivity onStart
-PullyStartup: MainActivity onResume overlay=false service=false appsLoaded=0
-PullyApps: loadAll done appCount=19 iconCount=19
-FATAL EXCEPTION: なし
-```
-
-両ケースで確認完了。
-
----
-
-## ビルド結果
-
-```
-.\gradlew.bat clean assembleDebug --no-daemon
-BUILD SUCCESSFUL in 21s
-37 actionable tasks: 37 executed
+.\gradlew.bat assembleDebug --no-daemon
+BUILD SUCCESSFUL
 
 .\gradlew.bat lintDebug --no-daemon
-BUILD SUCCESSFUL in 19s
-Lint errors: 0
+Lint errors: 0, Lint warnings: 0
 ```
 
-Kotlin コンパイル警告（エラーではない）:
-- `MOVE_TO_FOREGROUND` deprecated (UsageHistoryRepository.kt:78)
-- `checkOpNoThrow` deprecated (UsageHistoryRepository.kt:93)
-- GestureMath.kt: shadowed extension operators
-- SettingsScreen.kt: `LocalLifecycleOwner` deprecated
+### 禁止パターン検索 (全てヒットなし)
+
+```
+com.example.pullyluncher  → 0件
+AccessibilityService      → 0件
+temporaryHideSeconds      → 0件
+```
+
+### push 済み
+
+```
+git push -u origin integration/mac-features-20260617
+```
+
+PR 作成用 URL: https://github.com/rebirth-kreate/PullyLauncher/pull/new/integration/mac-features-20260617
 
 ---
 
-## Git 履歴
+## 現在の問題
 
-```
-4277b26 fix: resolve remaining startup process termination
-d2e61e0 docs: update CHATGPT_HANDOFF for startup crash fix
-dd54412 chore: remove .idea/deploymentTargetSelector.xml from tracking
-e3ac651 fix: prevent PullyLauncher from closing on startup
-fe3ca68 fix: ensure package broadcasts and app updates refresh
-f100503 fix: refresh launcher apps on package changes
-60e4e37 Update to Version 2
-```
-
-push 先: https://github.com/rebirth-kreate/PullyLauncher (main ブランチ)
+特になし。ビルド・Lint ともに正常。
+実機・エミュレーター上での動作確認は未実施。
 
 ---
 
-## 現在の Gradle 構成
+## 変更したファイル
 
-| コンポーネント | バージョン |
+| ファイル | 変更種別 |
 |---|---|
-| AGP | 8.10.1 |
-| Gradle | 8.11.1 |
-| Kotlin | 2.1.21 |
-| compileSdk / targetSdk | 35 |
-| minSdk | 26 |
-| applicationId | `com.rebirthkreate.pullylauncher` |
+| `MAC_FEATURE_MIGRATION_PLAN.md` | 新規作成（計画書） |
+| `app/src/main/java/com/rebirthkreate/pullylauncher/data/OverlayPositionPrefs.kt` | 新規作成 |
+| `app/src/main/java/com/rebirthkreate/pullylauncher/data/UiConfigPrefs.kt` | 拡張（8キー追加） |
+| `app/src/main/java/com/rebirthkreate/pullylauncher/LauncherRepository.kt` | バグ修正（getForegroundPackage呼び出し削除） |
+| `app/src/main/java/com/rebirthkreate/pullylauncher/OverlayTouchView.kt` | バグ修正（HIT_MARGIN, width * 0.5f） |
+| `app/src/main/java/com/rebirthkreate/pullylauncher/OverlayService.kt` | 機能追加（position保存・フェード・FLAG_NOT_TOUCH_MODAL・roundToInt） |
+| `app/src/main/res/values/strings.xml` | 追加（〜30キー・app_nameタイポ修正） |
+| `app/src/main/res/values-en/strings.xml` | 追加（同上・英語） |
+| `app/src/main/java/com/rebirthkreate/pullylauncher/ui/theme/SettingsScreen.kt` | stringResource()化 |
 
 ---
 
-## Logcatフィルタ（今後の実機確認用）
+## 変更内容
+
+### 1. OverlayPositionPrefs（新規）
+
+SharedPreferences `"overlay_position"` に center_x / center_y を保存・復元。
+- `save()`: 非有限値（NaN/Inf）は保存しない
+- `load()`: 復元値が非有限の場合はデフォルト値を使用、スクリーン境界でcoerceIn
+
+### 2. UiConfigPrefs 拡張
+
+既存キー（nodeCount, colorPreset, ballAlpha, secureOverlay）を保持したまま、
+スライダー設定8項目を追加:
 
 ```
-tag:PullyStartup tag:PullyApps
+button_radius_px, node_radius_px, spacing_px, base_offset_px,
+lock_distance_px, cancel_ratio_threshold, edge_darkness, background_glow
 ```
 
+各復元値はSettingsScreenのスライダー範囲と同じ値でcoerceIn。
+HiddenAppsPrefs は別 prefs のまま維持（分離構造を変更しない）。
+
+### 3. LauncherRepository バグ修正
+
+`refreshHistory()` 内の `getForegroundPackage()` 呼び出しを削除。
+
+**バグの詳細**: タッチダウン時に `refreshHistoryAsync()` が呼ばれ、そこで
+`currentForegroundPackage = UsageHistoryRepository.getForegroundPackage(context)` が実行されていた。
+UsageStats は5〜30秒程度の遅延があるため、`startForegroundPolling()` が正確に保持していた
+フォアグラウンドパッケージ値を古い値で上書きしていた。
+現在 `currentForegroundPackage` の書き込み元は `startForegroundPolling()` のみ。
+
+### 4. OverlayTouchView バグ修正
+
+```kotlin
+// 変更前
+val lx = event.x - width / 2
+val hitR = currentVisualRadius()
+
+// 変更後
+val lx = event.x - width * 0.5f       // 整数除算誤差の排除
+val hitR = currentVisualRadius() - HIT_MARGIN  // Window端のtoInt()切り捨て誤差吸収
+```
+
+`HIT_MARGIN = 2f`: タッチWindowの座標がWindowManagerのtoInt()で切り捨てられるため、
+正方形Window角へのヒット誤判定を防ぐ。
+
+### 5. OverlayService 変更
+
+**a) FLAG_NOT_TOUCH_MODAL 追加**
+
+```kotlin
+tParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL  // ← 追加
+```
+
+ボール外へのタッチが背景アプリに届かない問題の修正。
+
+**b) roundToInt() 統一**
+
+WindowManager に渡す全座標・サイズで `toInt()` → `roundToInt()` に変更。
+一方向への誤差蓄積を防ぐ。
+
+**c) 位置保存・復元**
+
+```kotlin
+// onCreate: 復元
+val (cx, cy) = OverlayPositionPrefs.load(this, defaultX, defaultY, ballRadius, screenW, screenH)
+
+// onPositionChanged: 保存
+OverlayPositionPrefs.save(applicationContext, cx, cy)
+```
+
+**d) フェードアニメーション**
+
+```kotlin
+private fun hideOverlay() {
+    drawView.animate().alpha(0f).setDuration(FADE_DURATION_MS)
+        .withEndAction { drawView.visibility = View.INVISIBLE }
+        .start()
+}
+
+private fun showOverlay() {
+    if (drawView.visibility != View.VISIBLE) {
+        drawView.alpha = 0f
+        drawView.visibility = View.VISIBLE
+    }
+    drawView.animate().alpha(1f).setDuration(FADE_DURATION_MS).start()
+}
+```
+
+`applyBallVisibility()` がこれらを呼ぶ。ダブルタップ機能とは切り離されており、
+非表示アプリ判定による表示切替時のみ動作する。
+
+### 6. strings.xml 追加・修正
+
+- `app_name`: PullyLuncher → PullyLauncher（両ファイル）
+- 〜30キー追加（セクション見出し・設定ラベル・設定ヒント・固定アプリ・使用履歴・フローティング・非表示アプリ・アプリピッカー）
+- `values/` = 日本語デフォルト、`values-en/` = 英語オーバーライド（Macと逆構造に対応）
+- SettingsScreen.kt: 全ハードコード日本語文字列を `stringResource()` で置き換え
+
 ---
 
-## 残留 Kotlin 警告（後回し可）
+## 実行結果
 
-| ファイル | 警告 | 対応方針 |
-|---|---|---|
-| `UsageHistoryRepository.kt:78` | `MOVE_TO_FOREGROUND` deprecated | UsageEvents.Event.MOVE_TO_FOREGROUND に変更 |
-| `UsageHistoryRepository.kt:93` | `checkOpNoThrow` deprecated | AppOpsManager.unsafeCheckOpNoThrow 等に変更 |
-| `GestureMath.kt:19-27` | shadowed extension operators | `operator fun times/plus/minus` を削除して標準メンバーを使う |
-| `SettingsScreen.kt:63` | `LocalLifecycleOwner` deprecated | `androidx.lifecycle.compose` パッケージへ移行 |
+```
+git log -8 --oneline
+793bb07 feat: restore independent overlay fade transitions
+810081b feat: restore localized settings resources
+40e0588 fix: restore safe overlay touch and hit testing behavior
+5914e26 fix: persist complete launcher UI configuration
+deac048 feat: restore overlay position persistence
+2574694 docs: revise Mac feature migration plan
+7d78a93 docs: update CHATGPT_HANDOFF for startup fix with emulator verification
+4277b26 fix: resolve remaining startup process termination
+```
+
+ブランチ: `integration/mac-features-20260617`（origin にpush済み）
+main へのマージは未実施・未予定。
 
 ---
 
-## 次に実施すべきこと
+## 延期した機能（実装しない）
 
-1. **Galaxy実機での確認** — エミュレーター確認済み。実機でも同様に起動することを確認
-2. オーバーレイパーミッション付与後にフローティングボタンが表示されるか確認
-3. プライバシーポリシーを Web ページとして公開（GitHub Pages 等）
-4. keystore 生成・release ビルド設定
-5. Play Console — Data Safety・Foreground Service 申告
+以下は Mac版に存在するが、現行のジェスチャー設計と競合するため実装しなかった:
+
+| 機能 | 理由 |
+|---|---|
+| ダブルタップ一時非表示 | 新ジェスチャー設計（タップ=ホーム）と競合。シングルタップ応答遅延が発生する |
+| `temporaryHideSeconds` | 上記に付随する設定 |
+| ダブルタップ検出（singleTapRunnable） | 同上 |
+| 使用履歴を主要アプリ選択源にする | 新設計ではユーザー登録固定アプリから選択。長押し=ARK将来版 |
+
+詳細は `MAC_FEATURE_MIGRATION_PLAN.md` の DEFERRED セクションを参照。
 
 ---
 
 ## ChatGPTに相談したいこと
 
-1. Galaxy実機での起動確認結果
-2. 上記の deprecated 警告を修正すべきか（Play Store 審査に影響するか）
-3. プライバシーポリシーの公開方法
-4. フローティングボタン動作確認（オーバーレイ権限付与後）
+1. **実機動作確認** — エミュレーターでのビルド確認は完了。Galaxy実機でのオーバーレイ表示・フェード・位置保存の動作確認を行いたい
+2. **main へのマージ方針** — `integration/mac-features-20260617` を main へ取り込む際のタイミングと方法（PR vs direct merge）
+3. **固定アプリUI** — 現状 `appSlots` は固定アプリ登録を `UiConfigPrefs` に依存しているが、SettingsScreen の「固定アプリを追加」UI実装が次のステップになる
+4. **長押し=ARK** — 将来のARK版統合に向けた設計指針（`onLongPressTimer()` は現在ボール移動に使われているため再整理が必要）
