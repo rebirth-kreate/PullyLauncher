@@ -45,24 +45,19 @@ private const val AXIS_SMOOTH_FACTOR = 0.18f
 internal const val REVOLVER_CANCEL_ZONE_RATIO = 1.2f
 
 /**
- * 回転速度の全体倍率。1.0 が基準速度。NEAR/FAR の比率を維持したまま全体速度を変更する。
- * 後から調整可能。
+ * 近距離（Pully と横方向同位置）での基準回転速度。
+ * cfg.revolverSpeedScale=1.0 のときの実効値。後から調整可能。
  */
-private const val REVOLVER_SPEED_MULTIPLIER = 0.6f
+private const val REVOLVER_SPEED_NEAR = 2.4f
 
 /**
- * 指が中心に近い場合の回転速度（指を 100px 動かしたときのアイテム移動数）。
- * REVOLVER_SPEED_MULTIPLIER が掛けられた値が実効速度。後から調整可能。
+ * 遠距離（Pully から横方向へ MAX_DIST 離れた位置）での基準回転速度。
+ * cfg.revolverSpeedScale=1.0 のときの実効値。後から調整可能。
  */
-private const val REVOLVER_SPEED_NEAR = 4.0f * REVOLVER_SPEED_MULTIPLIER  // 実効値 ≈ 2.4
+private const val REVOLVER_SPEED_FAR = 0.3f
 
 /**
- * 指が中心から遠い場合の回転速度。後から調整可能。
- */
-private const val REVOLVER_SPEED_FAR = 0.5f * REVOLVER_SPEED_MULTIPLIER   // 実効値 ≈ 0.3
-
-/**
- * 速度が最低値になる中心からの距離（px）。後から調整可能。
+ * 速度が FAR 値になる Pully 中心からの横方向距離（px）。後から調整可能。
  */
 internal const val REVOLVER_SPEED_MAX_DIST_PX = 300f
 
@@ -379,9 +374,11 @@ class OverlayTouchView(
         val pinned = LauncherRepository.pinnedApps
         val count  = pinned.size
         if (!inCancelZone && count > 0) {
-            // 中心に近いほど速く、遠いほどゆっくり回転
-            val normalizedDist = (dist / REVOLVER_SPEED_MAX_DIST_PX).coerceIn(0f, 1f)
-            val speedFactor    = REVOLVER_SPEED_NEAR + (REVOLVER_SPEED_FAR - REVOLVER_SPEED_NEAR) * normalizedDist
+            // Pully 中心からの横方向距離で速度を決定する。
+            // 上下移動量 → 回転入力、横方向距離 → 速度制御（上下移動しても横位置が同じなら速度は変化しない）
+            val horizontalDist = abs(rawX - centerX)
+            val normalizedHorizDist = (horizontalDist / REVOLVER_SPEED_MAX_DIST_PX).coerceIn(0f, 1f)
+            val speedFactor = (REVOLVER_SPEED_NEAR + (REVOLVER_SPEED_FAR - REVOLVER_SPEED_NEAR) * normalizedHorizDist) * cfg.revolverSpeedScale
             // 上方向（負の deltaY）でオフセット増加 → 次のアイテムへ
             val rawDelta = -(rawY - lastRawY) * speedFactor / REVOLVER_BASE_PX_PER_ITEM
             // 選択枠付近でのスナップ抵抗（中心に近づくほど減速）

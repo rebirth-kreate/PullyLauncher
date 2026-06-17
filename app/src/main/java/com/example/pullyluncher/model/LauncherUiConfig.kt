@@ -35,5 +35,15 @@ data class LauncherUiConfig(
      * リボルバーメニューの固定選択枠の位置。
      * デフォルト RIGHT: Pully が画面左端に配置されているため、選択枠を右側（画面内側）に向ける。
      */
-    val selectorPosition: SelectorPosition = SelectorPosition.RIGHT
+    val selectorPosition: SelectorPosition = SelectorPosition.RIGHT,
+
+    // ── V2 リボルバー専用設定（Pull 側には影響しない） ──────────────────
+    /** リボルバーリング半径比率（ボール半径 × この値）。1.5〜4.0。デフォルト 2.4 = 現行と同等。 */
+    val revolverRingRatio: Float = 2.4f,
+    /** 回転速度スケール（1.0 = デフォルト速度の 100%）。0.5〜2.0。 */
+    val revolverSpeedScale: Float = 1.0f,
+    /** リボルバー内アイコンサイズ比率（nodeRadiusPx × この値）。0.5〜1.8。デフォルト 1.0 = Pull と同サイズ。 */
+    val revolverNodeScale: Float = 1.0f,
+    /** リボルバーアーク間隔比率（1.0 = 60°/アイテム）。0.4〜1.8。Pull 側の間隔設定とは独立。 */
+    val revolverArcSpacing: Float = 1.0f
 )

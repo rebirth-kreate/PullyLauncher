@@ -1,7 +1,12 @@
 package com.example.pullyluncher.ui.theme
 
 import android.content.Intent
+import android.graphics.Paint as AndroidPaint
+import android.graphics.RadialGradient
+import android.graphics.RectF
+import android.graphics.Shader
 import android.provider.Settings
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -41,14 +48,17 @@ import com.example.pullyluncher.model.LauncherUiConfig
 import com.example.pullyluncher.model.SelectorPosition
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 @Composable
 fun SettingsScreen(
     config: LauncherUiConfig,
     onConfigChange: (LauncherUiConfig) -> Unit,
     onClose: () -> Unit,
-    // ── フローティング制御（デフォルト値付きで既存呼び出しとの互換性を保つ）──
     hasOverlayPermission: Boolean  = false,
     isOverlayRunning: Boolean      = false,
     onRequestPermission: () -> Unit = {},
@@ -57,7 +67,6 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
 
-    // ── 固定アプリ状態 ─────────────────────────────────────────────
     var localPinned      by remember { mutableStateOf(LauncherRepository.pinnedApps) }
     var showPicker       by remember { mutableStateOf(false) }
     var pickerSlot       by remember { mutableIntStateOf(0) }
@@ -70,7 +79,6 @@ fun SettingsScreen(
         }
     }
 
-    // ── 非表示アプリピッカーダイアログ ─────────────────────────────
     if (showHiddenPicker) {
         AppPickerDialog(
             allApps  = LauncherRepository.allApps,
@@ -83,7 +91,6 @@ fun SettingsScreen(
         )
     }
 
-    // ── 固定アプリピッカーダイアログ ────────────────────────────────
     if (showPicker) {
         AppPickerDialog(
             allApps  = LauncherRepository.allApps,
@@ -102,7 +109,6 @@ fun SettingsScreen(
         )
     }
 
-    // ── 本体 ────────────────────────────────────────────────────────
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -116,10 +122,33 @@ fun SettingsScreen(
             color = Color.White
         )
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ═══════════════════════════════════════════════════════════
+        // リボルバー プレビュー
+        // ═══════════════════════════════════════════════════════════
+        Text(
+            text  = stringResource(R.string.revolver_preview_label),
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF81A1C1),
+            modifier = Modifier.padding(bottom = 6.dp)
+        )
+        RevolverPreview(
+            config     = config,
+            pinnedApps = localPinned,
+            modifier   = Modifier
+                .fillMaxWidth()
+                .height(210.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF13181F))
+        )
+
         Spacer(modifier = Modifier.height(20.dp))
 
-        // ---- 見た目 / Appearance ----
-        SettingSection(title = stringResource(R.string.section_appearance))
+        // ═══════════════════════════════════════════════════════════
+        // Pull メニュー設定
+        // ═══════════════════════════════════════════════════════════
+        SettingSection(title = stringResource(R.string.section_pull_menu))
 
         SettingSlider(
             label         = stringResource(R.string.setting_button_radius),
@@ -150,23 +179,123 @@ fun SettingsScreen(
             onValueChange = { onConfigChange(config.copy(ballAlpha = it)) }
         )
         SettingSlider(
-            label         = stringResource(R.string.setting_edge_darkness),
-            hint          = stringResource(R.string.hint_edge_darkness),
-            value         = config.edgeDarkness,
-            range         = 0.0f..0.9f,
-            onValueChange = { onConfigChange(config.copy(edgeDarkness = it)) }
+            label         = stringResource(R.string.setting_base_offset),
+            hint          = stringResource(R.string.hint_base_offset),
+            value         = config.baseOffsetPx,
+            range         = 100f..280f,
+            onValueChange = { onConfigChange(config.copy(baseOffsetPx = it)) }
         )
         SettingSlider(
-            label         = stringResource(R.string.setting_background_glow),
-            hint          = stringResource(R.string.hint_background_glow),
-            value         = config.backgroundGlow,
-            range         = 0.0f..0.6f,
-            onValueChange = { onConfigChange(config.copy(backgroundGlow = it)) }
+            label         = stringResource(R.string.setting_lock_distance),
+            hint          = stringResource(R.string.hint_lock_distance),
+            value         = config.lockDistancePx,
+            range         = 60f..220f,
+            onValueChange = { onConfigChange(config.copy(lockDistancePx = it)) }
+        )
+        SettingSlider(
+            label         = stringResource(R.string.setting_cancel_ratio),
+            hint          = stringResource(R.string.hint_cancel_ratio),
+            value         = config.cancelRatioThreshold,
+            range         = 0.15f..0.80f,
+            onValueChange = { onConfigChange(config.copy(cancelRatioThreshold = it)) }
+        )
+        SettingSlider(
+            label         = stringResource(R.string.setting_node_count),
+            hint          = stringResource(R.string.hint_node_count),
+            value         = config.nodeCount.toFloat(),
+            range         = 3f..10f,
+            steps         = 6,
+            onValueChange = { onConfigChange(config.copy(nodeCount = it.roundToInt())) }
+        )
+        SettingSlider(
+            label         = stringResource(R.string.setting_temporary_hide_seconds),
+            hint          = stringResource(R.string.hint_temporary_hide_seconds),
+            value         = config.temporaryHideSeconds.toFloat(),
+            range         = 1f..10f,
+            steps         = 8,
+            onValueChange = { onConfigChange(config.copy(temporaryHideSeconds = it.roundToInt())) }
         )
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // ---- カラー / Color ----
+        // ═══════════════════════════════════════════════════════════
+        // リボルバー設定
+        // ═══════════════════════════════════════════════════════════
+        SettingSection(title = stringResource(R.string.section_revolver))
+
+        SettingSlider(
+            label         = stringResource(R.string.setting_revolver_diameter),
+            hint          = stringResource(R.string.hint_revolver_diameter),
+            value         = config.revolverRingRatio,
+            range         = 1.5f..4.0f,
+            onValueChange = { onConfigChange(config.copy(revolverRingRatio = it)) }
+        )
+        SettingSlider(
+            label         = "${stringResource(R.string.setting_revolver_speed)} : ${(config.revolverSpeedScale * 100).roundToInt()}%",
+            hint          = stringResource(R.string.hint_revolver_speed),
+            value         = config.revolverSpeedScale,
+            range         = 0.5f..2.0f,
+            showRaw       = true,
+            onValueChange = { onConfigChange(config.copy(revolverSpeedScale = it)) }
+        )
+        SettingSlider(
+            label         = stringResource(R.string.setting_revolver_icon_size),
+            hint          = stringResource(R.string.hint_revolver_icon_size),
+            value         = config.revolverNodeScale,
+            range         = 0.5f..1.8f,
+            onValueChange = { onConfigChange(config.copy(revolverNodeScale = it)) }
+        )
+        SettingSlider(
+            label         = stringResource(R.string.setting_revolver_spacing),
+            hint          = stringResource(R.string.hint_revolver_spacing),
+            value         = config.revolverArcSpacing,
+            range         = 0.4f..1.8f,
+            onValueChange = { onConfigChange(config.copy(revolverArcSpacing = it)) }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text  = stringResource(R.string.hint_revolver_selector_position),
+            color = Color(0xFF81A1C1),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            SelectorPosition.entries.forEach { pos ->
+                val isSelected = config.selectorPosition == pos
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (isSelected) Color(0xFF1E3A4A) else Color(0xFF1A1F2E))
+                        .border(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) Color(0xFF88C0D0) else Color(0xFF4C566A),
+                            shape = RoundedCornerShape(6.dp)
+                        )
+                        .clickable { onConfigChange(config.copy(selectorPosition = pos)) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text  = pos.displayName,
+                        color = if (isSelected) Color(0xFF88C0D0) else Color(0xFF81A1C1),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ═══════════════════════════════════════════════════════════
+        // カラー
+        // ═══════════════════════════════════════════════════════════
         SettingSection(title = stringResource(R.string.section_color))
 
         Text(
@@ -216,51 +345,31 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // ---- 挙動 / Behavior ----
-        SettingSection(title = stringResource(R.string.section_behavior))
+        // ═══════════════════════════════════════════════════════════
+        // 外観（汎用）
+        // ═══════════════════════════════════════════════════════════
+        SettingSection(title = stringResource(R.string.section_appearance))
 
         SettingSlider(
-            label         = stringResource(R.string.setting_base_offset),
-            hint          = stringResource(R.string.hint_base_offset),
-            value         = config.baseOffsetPx,
-            range         = 100f..280f,
-            onValueChange = { onConfigChange(config.copy(baseOffsetPx = it)) }
+            label         = stringResource(R.string.setting_edge_darkness),
+            hint          = stringResource(R.string.hint_edge_darkness),
+            value         = config.edgeDarkness,
+            range         = 0.0f..0.9f,
+            onValueChange = { onConfigChange(config.copy(edgeDarkness = it)) }
         )
         SettingSlider(
-            label         = stringResource(R.string.setting_lock_distance),
-            hint          = stringResource(R.string.hint_lock_distance),
-            value         = config.lockDistancePx,
-            range         = 60f..220f,
-            onValueChange = { onConfigChange(config.copy(lockDistancePx = it)) }
-        )
-        SettingSlider(
-            label         = stringResource(R.string.setting_cancel_ratio),
-            hint          = stringResource(R.string.hint_cancel_ratio),
-            value         = config.cancelRatioThreshold,
-            range         = 0.15f..0.80f,
-            onValueChange = { onConfigChange(config.copy(cancelRatioThreshold = it)) }
-        )
-        SettingSlider(
-            label         = stringResource(R.string.setting_node_count),
-            hint          = stringResource(R.string.hint_node_count),
-            value         = config.nodeCount.toFloat(),
-            range         = 3f..10f,
-            steps         = 6,
-            onValueChange = { onConfigChange(config.copy(nodeCount = it.roundToInt())) }
-        )
-        // ダブルタップ一時非表示: 1〜10秒（steps=8 で 1,2,…,10 の整数値）
-        SettingSlider(
-            label         = stringResource(R.string.setting_temporary_hide_seconds),
-            hint          = stringResource(R.string.hint_temporary_hide_seconds),
-            value         = config.temporaryHideSeconds.toFloat(),
-            range         = 1f..10f,
-            steps         = 8,
-            onValueChange = { onConfigChange(config.copy(temporaryHideSeconds = it.roundToInt())) }
+            label         = stringResource(R.string.setting_background_glow),
+            hint          = stringResource(R.string.hint_background_glow),
+            value         = config.backgroundGlow,
+            range         = 0.0f..0.6f,
+            onValueChange = { onConfigChange(config.copy(backgroundGlow = it)) }
         )
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // ---- 固定アプリ / Pinned Apps ----
+        // ═══════════════════════════════════════════════════════════
+        // 固定アプリ
+        // ═══════════════════════════════════════════════════════════
         SettingSection(title = stringResource(R.string.section_pinned_apps, LauncherRepository.MAX_PINS))
 
         Text(
@@ -316,115 +425,9 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // ---- リボルバー / Revolver ----
-        SettingSection(title = stringResource(R.string.section_revolver))
-
-        Text(
-            text  = stringResource(R.string.hint_revolver_selector_position),
-            color = Color(0xFF81A1C1),
-            style = MaterialTheme.typography.bodySmall
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            SelectorPosition.entries.forEach { pos ->
-                val isSelected = config.selectorPosition == pos
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (isSelected) Color(0xFF1E3A4A) else Color(0xFF1A1F2E))
-                        .border(
-                            width = if (isSelected) 2.dp else 1.dp,
-                            color = if (isSelected) Color(0xFF88C0D0) else Color(0xFF4C566A),
-                            shape = RoundedCornerShape(6.dp)
-                        )
-                        .clickable { onConfigChange(config.copy(selectorPosition = pos)) }
-                        .padding(vertical = 10.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text  = pos.displayName,
-                        color = if (isSelected) Color(0xFF88C0D0) else Color(0xFF81A1C1),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // ---- 使用履歴 / Usage History ----
-        SettingSection(title = stringResource(R.string.section_usage_history))
-
-        val hasUsageStats = UsageHistoryRepository.hasPermission(context)
-        if (hasUsageStats) {
-            Text(
-                text  = stringResource(R.string.usage_history_enabled),
-                color = Color(0xFF88C0D0),
-                style = MaterialTheme.typography.bodySmall
-            )
-        } else {
-            Text(
-                text  = stringResource(R.string.usage_history_disabled),
-                color = Color(0xFF81A1C1),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                    )
-                }
-            ) {
-                Text(stringResource(R.string.grant_permission))
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // ---- フローティング / Floating ----
-        SettingSection(title = stringResource(R.string.section_floating))
-
-        if (!hasOverlayPermission) {
-            Text(
-                text  = stringResource(R.string.overlay_permission_required),
-                color = Color(0xFFBF616A),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = onRequestPermission) {
-                Text(stringResource(R.string.grant_overlay_permission))
-            }
-        } else {
-            val statusColor = if (isOverlayRunning) Color(0xFF88C0D0) else Color(0xFF81A1C1)
-            Text(
-                text  = if (isOverlayRunning) stringResource(R.string.floating_status_running)
-                        else stringResource(R.string.floating_status_stopped),
-                color = statusColor,
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            if (isOverlayRunning) {
-                OutlinedButton(onClick = onStopOverlay) {
-                    Text(stringResource(R.string.stop_floating), color = Color(0xFFBF616A))
-                }
-            } else {
-                Button(onClick = onStartOverlay) {
-                    Text(stringResource(R.string.start_floating))
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // ---- 非表示アプリ / Hidden Apps ----
+        // ═══════════════════════════════════════════════════════════
+        // 非表示アプリ
+        // ═══════════════════════════════════════════════════════════
         SettingSection(title = stringResource(R.string.section_hidden_apps))
 
         Text(
@@ -469,7 +472,9 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // ---- 撮影モード / Capture Mode ----
+        // ═══════════════════════════════════════════════════════════
+        // 撮影モード
+        // ═══════════════════════════════════════════════════════════
         SettingSection(title = stringResource(R.string.section_capture_mode))
 
         Text(
@@ -493,6 +498,77 @@ fun SettingsScreen(
             )
         }
 
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ═══════════════════════════════════════════════════════════
+        // 使用履歴
+        // ═══════════════════════════════════════════════════════════
+        SettingSection(title = stringResource(R.string.section_usage_history))
+
+        val hasUsageStats = UsageHistoryRepository.hasPermission(context)
+        if (hasUsageStats) {
+            Text(
+                text  = stringResource(R.string.usage_history_enabled),
+                color = Color(0xFF88C0D0),
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else {
+            Text(
+                text  = stringResource(R.string.usage_history_disabled),
+                color = Color(0xFF81A1C1),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    )
+                }
+            ) {
+                Text(stringResource(R.string.grant_permission))
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ═══════════════════════════════════════════════════════════
+        // フローティング制御
+        // ═══════════════════════════════════════════════════════════
+        SettingSection(title = stringResource(R.string.section_floating))
+
+        if (!hasOverlayPermission) {
+            Text(
+                text  = stringResource(R.string.overlay_permission_required),
+                color = Color(0xFFBF616A),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = onRequestPermission) {
+                Text(stringResource(R.string.grant_overlay_permission))
+            }
+        } else {
+            val statusColor = if (isOverlayRunning) Color(0xFF88C0D0) else Color(0xFF81A1C1)
+            Text(
+                text  = if (isOverlayRunning) stringResource(R.string.floating_status_running)
+                        else stringResource(R.string.floating_status_stopped),
+                color = statusColor,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            if (isOverlayRunning) {
+                OutlinedButton(onClick = onStopOverlay) {
+                    Text(stringResource(R.string.stop_floating), color = Color(0xFFBF616A))
+                }
+            } else {
+                Button(onClick = onStartOverlay) {
+                    Text(stringResource(R.string.start_floating))
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(onClick = onClose) {
@@ -501,6 +577,166 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(40.dp))
     }
+}
+
+// ── リボルバープレビュー ──────────────────────────────────────────
+
+@Composable
+private fun RevolverPreview(
+    config: LauncherUiConfig,
+    pinnedApps: List<AppEntry>,
+    modifier: Modifier = Modifier
+) {
+    val preset = ColorPresets.get(config.colorPreset)
+
+    // プレビューに使うダミーアプリ数（実登録 or 4個のダミー）
+    val previewCount = if (pinnedApps.isEmpty()) 4 else pinnedApps.size
+
+    Canvas(modifier = modifier) {
+        drawIntoCanvas { composeCanvas ->
+            val nc = composeCanvas.nativeCanvas
+            val pw = size.width
+            val ph = size.height
+            val cx = pw / 2f
+            val cy = ph / 2f
+
+            // 設定値をそのまま使いつつ、プレビュー領域に収まるようスケール
+            val bRadius = config.buttonRadiusPx
+            val nRadius = config.nodeRadiusPx * config.revolverNodeScale
+            val rRadius = bRadius * config.revolverRingRatio
+            val needed  = rRadius + nRadius * 2.5f + 20f
+            val avail   = min(pw, ph) / 2f * 0.84f
+            val scale   = (avail / needed).coerceIn(0.25f, 2.5f)
+
+            val sBRadius = bRadius * scale
+            val sNRadius = nRadius * scale
+            val sRRadius = rRadius * scale
+
+            val selectorAngleDeg = config.selectorPosition.angleDeg
+            val selectorAngleRad = Math.toRadians(selectorAngleDeg.toDouble()).toFloat()
+
+            val arcPerItem = if (previewCount <= 1) 0f
+                else minOf(60f * config.revolverArcSpacing, 240f / previewCount.toFloat())
+
+            // ── アークガイド ────────────────────────────────────────
+            if (previewCount >= 2) {
+                val guidePaint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+                    style      = AndroidPaint.Style.STROKE
+                    strokeWidth = 1.5f * scale.coerceAtLeast(0.6f)
+                    color      = previewArgb(0xFFFFFFFF.toInt(), 0.13f)
+                    strokeCap  = android.graphics.Paint.Cap.ROUND
+                }
+                val totalArc  = minOf(arcPerItem * previewCount, 240f)
+                val arcStart  = selectorAngleDeg - totalArc / 2f
+                val arcRect   = RectF(cx - sRRadius, cy - sRRadius, cx + sRRadius, cy + sRRadius)
+                nc.drawArc(arcRect, arcStart, totalArc, false, guidePaint)
+            }
+
+            // ── 中心ボール ──────────────────────────────────────────
+            val ballPaint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+                color = previewArgb(preset.buttonColor, config.ballAlpha)
+            }
+            nc.drawCircle(cx, cy, sBRadius, ballPaint)
+
+            // ── アイテム ─────────────────────────────────────────────
+            val halfCount = previewCount / 2f
+            val nodePaint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+            val iconPaint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+
+            for (i in 0 until previewCount) {
+                var relIdx = i.toFloat()  // rotoOffset=0 → item 0 がセレクター位置
+                while (relIdx >  halfCount) relIdx -= previewCount
+                while (relIdx < -halfCount) relIdx += previewCount
+
+                val itemAngleDeg = selectorAngleDeg - relIdx * arcPerItem
+                val itemAngleRad = Math.toRadians(itemAngleDeg.toDouble()).toFloat()
+                val itemX = cx + cos(itemAngleRad) * sRRadius
+                val itemY = cy + sin(itemAngleRad) * sRRadius
+
+                val arcProx  = (1f - abs(relIdx) / halfCount.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                val extraDim = if (previewCount <= 2) 1f else 0.12f + 0.88f * arcProx
+
+                val isSelected = (i == 0)
+                val baseDim = if (isSelected) 1.00f else 0.65f
+                val dimFactor = baseDim * extraDim
+                val itemAlpha = (dimFactor * 255).toInt().coerceIn(0, 255)
+
+                val drawRadius = if (isSelected) sNRadius * 1.18f
+                    else sNRadius * (0.68f + 0.24f * arcProx).coerceIn(0.68f, 0.92f)
+
+                // 選択中グロー
+                if (isSelected) {
+                    val glowPaint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+                        shader = RadialGradient(
+                            itemX, itemY, drawRadius * 2.4f,
+                            intArrayOf(previewArgb(preset.nodeSelectedColor, 0.30f),
+                                       android.graphics.Color.TRANSPARENT),
+                            floatArrayOf(0f, 1f),
+                            Shader.TileMode.CLAMP
+                        )
+                    }
+                    nc.drawCircle(itemX, itemY, drawRadius * 2.4f, glowPaint)
+                }
+
+                nodePaint.color = previewArgb(
+                    if (isSelected) preset.nodeSelectedColor else preset.nodeIdleColor,
+                    dimFactor
+                )
+                nc.drawCircle(itemX, itemY, drawRadius, nodePaint)
+
+                // 実際のアプリアイコン（登録済みの場合）
+                if (pinnedApps.isNotEmpty()) {
+                    val pkg = pinnedApps.getOrNull(i)?.packageName
+                    val bm  = pkg?.let { LauncherRepository.iconBitmaps[it] }
+                    if (bm != null) {
+                        val iconSize = drawRadius * 1.42f
+                        iconPaint.alpha = itemAlpha
+                        nc.drawBitmap(
+                            bm, null,
+                            RectF(itemX - iconSize / 2f, itemY - iconSize / 2f,
+                                  itemX + iconSize / 2f, itemY + iconSize / 2f),
+                            iconPaint
+                        )
+                    }
+                }
+            }
+
+            // ── 山括弧ポインター ───────────────────────────────────
+            val selX = cx + cos(selectorAngleRad) * sRRadius
+            val selY = cy + sin(selectorAngleRad) * sRRadius
+            val ptrOffset = sNRadius * 1.18f + 6f * scale.coerceAtLeast(0.5f)
+            val tipX = selX + cos(selectorAngleRad) * ptrOffset
+            val tipY = selY + sin(selectorAngleRad) * ptrOffset
+            val armLen  = sNRadius * 0.72f
+            val armHalf = sNRadius * 0.54f
+            val perpCos = -sin(selectorAngleRad)
+            val perpSin =  cos(selectorAngleRad)
+            val arm1X = tipX + cos(selectorAngleRad) * armLen + perpCos * armHalf
+            val arm1Y = tipY + sin(selectorAngleRad) * armLen + perpSin * armHalf
+            val arm2X = tipX + cos(selectorAngleRad) * armLen - perpCos * armHalf
+            val arm2Y = tipY + sin(selectorAngleRad) * armLen - perpSin * armHalf
+
+            val chevronPaint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+                style      = AndroidPaint.Style.STROKE
+                strokeWidth = 2.5f * scale.coerceAtLeast(0.6f)
+                strokeCap  = android.graphics.Paint.Cap.ROUND
+                color      = previewArgb(preset.nodeSelectedColor, 0.88f)
+            }
+            nc.drawLine(tipX, tipY, arm1X, arm1Y, chevronPaint)
+            nc.drawLine(tipX, tipY, arm2X, arm2Y, chevronPaint)
+        }
+    }
+}
+
+/** プレビュー用 ARGB ヘルパー：alphaF [0,1] を適用したカラーを返す。 */
+private fun previewArgb(baseColor: Int, alphaF: Float): Int {
+    val a = (alphaF * 255).toInt().coerceIn(0, 255)
+    return android.graphics.Color.argb(
+        a,
+        android.graphics.Color.red(baseColor),
+        android.graphics.Color.green(baseColor),
+        android.graphics.Color.blue(baseColor)
+    )
 }
 
 // ── 固定アプリ行 ──────────────────────────────────────────────────
@@ -636,12 +872,15 @@ private fun SettingSlider(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     steps: Int = 0,
+    showRaw: Boolean = false,
     onValueChange: (Float) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        val displayValue = if (steps > 0) value.roundToInt().toString()
-                          else "%.2f".format(value)
-        Text(text = "$label : $displayValue", color = Color.White)
+        // showRaw=true のとき label にすでに値が含まれているため、値を付加しない
+        val displayText = if (showRaw) label
+            else if (steps > 0) "$label : ${value.roundToInt()}"
+            else "$label : ${"%.2f".format(value)}"
+        Text(text = displayText, color = Color.White)
         if (hint.isNotEmpty()) {
             Text(
                 text  = hint,
@@ -658,4 +897,3 @@ private fun SettingSlider(
         Spacer(modifier = Modifier.height(8.dp))
     }
 }
-

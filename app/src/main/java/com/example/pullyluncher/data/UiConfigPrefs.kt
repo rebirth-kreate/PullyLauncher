@@ -30,6 +30,12 @@ object UiConfigPrefs {
     private const val KEY_BACKGROUND_GLOW  = "background_glow"
     private const val KEY_SELECTOR_POSITION = "selector_position"
 
+    // ── V2 リボルバー専用キー ─────────────────────────────────────
+    private const val KEY_REVOLVER_RING_RATIO  = "revolver_ring_ratio"
+    private const val KEY_REVOLVER_SPEED_SCALE = "revolver_speed_scale"
+    private const val KEY_REVOLVER_NODE_SCALE  = "revolver_node_scale"
+    private const val KEY_REVOLVER_ARC_SPACING = "revolver_arc_spacing"
+
     fun save(context: Context, config: LauncherUiConfig) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
@@ -51,6 +57,11 @@ object UiConfigPrefs {
             .putString(KEY_HIDDEN_PKGS,    config.hiddenPackages.joinToString(","))
             // captureMode は永続化しない（セッション限定。再起動で自動的に false に戻る）
             .putString(KEY_SELECTOR_POSITION, config.selectorPosition.name)
+            // リボルバー専用
+            .putFloat(KEY_REVOLVER_RING_RATIO,  config.revolverRingRatio)
+            .putFloat(KEY_REVOLVER_SPEED_SCALE, config.revolverSpeedScale)
+            .putFloat(KEY_REVOLVER_NODE_SCALE,  config.revolverNodeScale)
+            .putFloat(KEY_REVOLVER_ARC_SPACING, config.revolverArcSpacing)
             .apply()
     }
 
@@ -80,7 +91,12 @@ object UiConfigPrefs {
                 SelectorPosition.valueOf(
                     prefs.getString(KEY_SELECTOR_POSITION, "RIGHT") ?: "RIGHT"
                 )
-            } catch (_: Exception) { SelectorPosition.RIGHT }
+            } catch (_: Exception) { SelectorPosition.RIGHT },
+            // リボルバー専用
+            revolverRingRatio  = prefs.getFloat(KEY_REVOLVER_RING_RATIO,  default.revolverRingRatio).coerceIn(1.5f, 4.0f),
+            revolverSpeedScale = prefs.getFloat(KEY_REVOLVER_SPEED_SCALE, default.revolverSpeedScale).coerceIn(0.5f, 2.0f),
+            revolverNodeScale  = prefs.getFloat(KEY_REVOLVER_NODE_SCALE,  default.revolverNodeScale).coerceIn(0.5f, 1.8f),
+            revolverArcSpacing = prefs.getFloat(KEY_REVOLVER_ARC_SPACING, default.revolverArcSpacing).coerceIn(0.4f, 1.8f)
         )
     }
 }

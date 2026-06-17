@@ -55,9 +55,21 @@
     <string name="pinned_apps_description">Apps pinned to the top of the pull menu. Also appear in the long-press revolver menu.</string>
     <string name="add_pinned_app">+ Add Pinned App</string>
 
+    <!-- ── Pull メニュー ── -->
+    <string name="section_pull_menu">Pull Menu</string>
+
     <!-- ── リボルバー ── -->
     <string name="section_revolver">Revolver Menu</string>
     <string name="hint_revolver_selector_position">Position of the fixed selection cursor on the revolver ring. Long-press Pully to open the menu, then slide up/down to rotate.</string>
+    <string name="setting_revolver_diameter">Revolver Diameter</string>
+    <string name="hint_revolver_diameter">Controls how far apps orbit from Pully. Larger = wider orbit. Screen-edge clipping is auto-adjusted.</string>
+    <string name="setting_revolver_speed">Rotation Speed</string>
+    <string name="hint_revolver_speed">100% = default speed. Horizontal distance from Pully automatically slows the spin.</string>
+    <string name="setting_revolver_icon_size">Icon Size</string>
+    <string name="hint_revolver_icon_size">Size of app icons in the revolver ring. Independent of Pull icon size.</string>
+    <string name="setting_revolver_spacing">App Spacing</string>
+    <string name="hint_revolver_spacing">Arc angle between adjacent apps on the ring. Narrow ←→ Wide.</string>
+    <string name="revolver_preview_label">Preview</string>
 
     <!-- ── 使用履歴 ── -->
     <string name="usage_history_enabled">Apps are sorted by recent usage.</string>

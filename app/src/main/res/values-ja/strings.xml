@@ -54,9 +54,21 @@
     <string name="pinned_apps_description">引き出しメニューの先頭に固定するアプリです。長押しリボルバーメニューにも表示されます。</string>
     <string name="add_pinned_app">＋ 固定アプリを追加</string>
 
+    <!-- ── Pull メニュー ── -->
+    <string name="section_pull_menu">Pull メニュー</string>
+
     <!-- ── リボルバー ── -->
     <string name="section_revolver">リボルバーメニュー</string>
     <string name="hint_revolver_selector_position">リボルバーリング上の選択枠の位置です。Pullyを長押しするとメニューが開き、指を上下に動かすとアプリが回転します。</string>
+    <string name="setting_revolver_diameter">リボルバーの直径</string>
+    <string name="hint_revolver_diameter">アプリが Pully を中心に回転する軌道の大きさです。大きいほど遠くを回ります。画面端への調整は自動で行います。</string>
+    <string name="setting_revolver_speed">回転速度</string>
+    <string name="hint_revolver_speed">100% がデフォルト速度です。Pully からの横方向の距離によって自動的に速度が変わります。</string>
+    <string name="setting_revolver_icon_size">アイコンサイズ</string>
+    <string name="hint_revolver_icon_size">リボルバーリング内のアプリアイコンサイズです。Pull メニュー側のサイズとは独立して設定できます。</string>
+    <string name="setting_revolver_spacing">アプリ間隔</string>
+    <string name="hint_revolver_spacing">リング上で隣のアプリとの角度間隔です。小さい ←→ 大きい</string>
+    <string name="revolver_preview_label">プレビュー</string>
 
     <!-- ── 使用履歴 ── -->
     <string name="usage_history_enabled">最近使ったアプリ順に表示します。</string>

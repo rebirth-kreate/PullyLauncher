@@ -31,12 +31,9 @@ private const val BLOB_ORIGIN_DIR_RATIO = 0.0f
  */
 internal const val BALL_MOVING_SCALE = 1.18f
 
-/** リボルバーリングの半径比率（ボール半径 × この値）。後から調整可能。 */
-private const val REVOLVER_RING_RATIO = 2.4f
-
-/** 選択枠から隣アイテムまでの間隔（度）。後から調整可能。 */
-private const val REVOLVER_ARC_PER_ITEM_DEG  = 60f
-/** 全アイテムが広がる最大アーク角（度）。この値を超えると自動縮小。後から調整可能。 */
+/** アーク間隔の基準値（度/アイテム）。cfg.revolverArcSpacing を掛けた値が実際の間隔。 */
+private const val REVOLVER_ARC_PER_ITEM_BASE_DEG = 60f
+/** 全アイテムが広がる最大アーク角（度）。この値を超えると自動縮小。 */
 private const val REVOLVER_ARC_MAX_TOTAL_DEG = 240f
 
 /**
@@ -199,22 +196,26 @@ class OverlayExpandView(context: Context) : View(context) {
         val count   = pinned.size
         if (count == 0) return
 
-        val preset    = ColorPresets.get(cfg.colorPreset)
-        val screenW   = width.toFloat()
-        val screenH   = height.toFloat()
-        val inCancel  = tv.inCancelZone
+        val preset   = ColorPresets.get(cfg.colorPreset)
+        val screenW  = width.toFloat()
+        val screenH  = height.toFloat()
+        val inCancel = tv.inCancelZone
 
-        // リング半径を画面端で調整
-        val baseRingRadius = cfg.buttonRadiusPx * REVOLVER_RING_RATIO
-        val ringRadius = computeRevolverRadius(cx, cy, screenW, screenH, baseRingRadius)
+        // リボルバー専用アイコン半径（Pull 側の nodeRadiusPx とは独立）
+        val revolverNodeRadius = cfg.nodeRadiusPx * cfg.revolverNodeScale
+
+        // リング半径を config から算出し、画面端で補正
+        val baseRingRadius = cfg.buttonRadiusPx * cfg.revolverRingRatio
+        val ringRadius = computeRevolverRadius(cx, cy, screenW, screenH, baseRingRadius, revolverNodeRadius)
 
         // 選択枠の角度（設定から読む）
         val selectorAngleDeg = cfg.selectorPosition.angleDeg
         val selectorAngleRad = Math.toRadians(selectorAngleDeg.toDouble()).toFloat()
 
-        // アーク配置：選択枠周辺へ集約（360度均等配置から変更）
+        // アーク間隔（設定値で調整可能。最大アーク角を超えると自動縮小）
         val arcPerItem = if (count <= 1) 0f
-            else minOf(REVOLVER_ARC_PER_ITEM_DEG, REVOLVER_ARC_MAX_TOTAL_DEG / count.toFloat())
+            else minOf(REVOLVER_ARC_PER_ITEM_BASE_DEG * cfg.revolverArcSpacing,
+                       REVOLVER_ARC_MAX_TOTAL_DEG / count.toFloat())
 
         // ── キャンセル範囲グロー ────────────────────────────────────
         val cancelRadius = cfg.buttonRadiusPx * REVOLVER_CANCEL_ZONE_RATIO
@@ -230,6 +231,21 @@ class OverlayExpandView(context: Context) : View(context) {
         }
         canvas.drawCircle(cx, cy, cancelRadius, cancelGlowPaint)
 
+        // ── アークガイド（アイコンより先に描画して重ならないようにする）──
+        if (count >= 2) {
+            val guideAlpha = if (inCancel) 0.07f else 0.14f
+            val arcGuidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style      = Paint.Style.STROKE
+                strokeWidth = 1.5f
+                strokeCap  = android.graphics.Paint.Cap.ROUND
+                color      = applyAlphaF(Color.WHITE, guideAlpha)
+            }
+            val totalArcDeg  = minOf(arcPerItem * count, REVOLVER_ARC_MAX_TOTAL_DEG)
+            val arcStartAngle = selectorAngleDeg - totalArcDeg / 2f
+            val arcRect = RectF(cx - ringRadius, cy - ringRadius, cx + ringRadius, cy + ringRadius)
+            canvas.drawArc(arcRect, arcStartAngle, totalArcDeg, false, arcGuidePaint)
+        }
+
         // ── 中心ボール ──────────────────────────────────────────────
         drawIdleBall(canvas, cx, cy)
 
@@ -240,21 +256,13 @@ class OverlayExpandView(context: Context) : View(context) {
             canvas.drawText("Cancel", cx, cy - cfg.buttonRadiusPx - 14f, revolverTextPaint)
         }
 
-        // ── 選択枠（固定位置）────────────────────────────────────────
-        val selX       = cx + cos(selectorAngleRad) * ringRadius
-        val selY       = cy + sin(selectorAngleRad) * ringRadius
-        val selRadius  = cfg.nodeRadiusPx * 1.38f
-        revolverSelectorPaint.color       = applyAlphaF(
-            if (inCancel) Color.GRAY else preset.nodeSelectedColor,
-            if (inCancel) 0.35f else 0.90f
-        )
-        revolverSelectorPaint.strokeWidth = 3.5f
-        canvas.drawCircle(selX, selY, selRadius, revolverSelectorPaint)
+        // 選択枠固定座標（山括弧ポインターの基準点）
+        val selX = cx + cos(selectorAngleRad) * ringRadius
+        val selY = cy + sin(selectorAngleRad) * ringRadius
 
         // ── アイテム（アーク配置・循環）────────────────────────────────
         val halfCount = count / 2f
         for (i in 0 until count) {
-            // 循環最短距離で選択枠中心からの位置を求める
             var relIdx = i.toFloat() - tv.rotoOffset
             while (relIdx >  halfCount) relIdx -= count
             while (relIdx < -halfCount) relIdx += count
@@ -264,34 +272,36 @@ class OverlayExpandView(context: Context) : View(context) {
             val itemX = cx + cos(itemAngleRad) * ringRadius
             val itemY = cy + sin(itemAngleRad) * ringRadius
 
-            // アーク端に近いほど透明度・サイズを下げる（折り返しを自然に見せる）
-            val arcProx   = (1f - abs(relIdx) / halfCount.coerceAtLeast(1f)).coerceIn(0f, 1f)
-            val extraDim  = if (count <= 2) 1f else 0.15f + 0.85f * arcProx
+            // 奥行き表現：選択枠から離れるほど小さく・透明に（滑らかに変化）
+            val arcProx  = (1f - abs(relIdx) / halfCount.coerceAtLeast(1f)).coerceIn(0f, 1f)
+            val extraDim = if (count <= 2) 1f else 0.12f + 0.88f * arcProx
 
             val isSelected = i == tv.selectedPinnedIndex && !inCancel
-            val baseDim    = when {
-                inCancel   -> 0.30f
+            val baseDim = when {
+                inCancel   -> 0.28f
                 isSelected -> 1.00f
                 else       -> 0.65f
             }
             val dimFactor  = baseDim * extraDim
             val itemAlpha  = (dimFactor * 255).toInt().coerceIn(0, 255)
+
+            // 選択中は基準サイズより大きく、それ以外は距離に応じて滑らかに縮小
             val drawRadius = when {
-                isSelected -> cfg.nodeRadiusPx * 1.18f
-                else       -> cfg.nodeRadiusPx * (0.70f + 0.22f * arcProx).coerceIn(0.70f, 0.92f)
+                isSelected -> revolverNodeRadius * 1.18f
+                else       -> revolverNodeRadius * (0.68f + 0.24f * arcProx).coerceIn(0.68f, 0.92f)
             }
 
             // 選択中グロー
             if (isSelected) {
                 val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     shader = RadialGradient(
-                        itemX, itemY, drawRadius * 2.2f,
-                        intArrayOf(applyAlphaF(preset.nodeSelectedColor, 0.35f), Color.TRANSPARENT),
+                        itemX, itemY, drawRadius * 2.4f,
+                        intArrayOf(applyAlphaF(preset.nodeSelectedColor, 0.32f), Color.TRANSPARENT),
                         floatArrayOf(0f, 1f),
                         Shader.TileMode.CLAMP
                     )
                 }
-                canvas.drawCircle(itemX, itemY, drawRadius * 2.2f, glowPaint)
+                canvas.drawCircle(itemX, itemY, drawRadius * 2.4f, glowPaint)
             }
 
             // ノード背景
@@ -309,21 +319,42 @@ class OverlayExpandView(context: Context) : View(context) {
                 iconPaint.alpha = itemAlpha
                 canvas.drawBitmap(
                     bm, null,
-                    RectF(
-                        itemX - iconSize / 2f, itemY - iconSize / 2f,
-                        itemX + iconSize / 2f, itemY + iconSize / 2f
-                    ),
+                    RectF(itemX - iconSize / 2f, itemY - iconSize / 2f,
+                          itemX + iconSize / 2f, itemY + iconSize / 2f),
                     iconPaint
                 )
             }
         }
+
+        // ── 山括弧ポインター（円形選択枠の代替）────────────────────────
+        // 選択位置のさらに外側に配置し、先端が選択中アイコンを指す
+        val selectedNodeRadius = revolverNodeRadius * 1.18f
+        val ptrOffset  = selectedNodeRadius + 6f       // アイコン端から 6px 離す
+        val tipX = selX + cos(selectorAngleRad) * ptrOffset
+        val tipY = selY + sin(selectorAngleRad) * ptrOffset
+        val armLen  = revolverNodeRadius * 0.72f
+        val armHalf = revolverNodeRadius * 0.54f
+        val perpCos = -sin(selectorAngleRad)
+        val perpSin =  cos(selectorAngleRad)
+        val arm1X = tipX + cos(selectorAngleRad) * armLen + perpCos * armHalf
+        val arm1Y = tipY + sin(selectorAngleRad) * armLen + perpSin * armHalf
+        val arm2X = tipX + cos(selectorAngleRad) * armLen - perpCos * armHalf
+        val arm2Y = tipY + sin(selectorAngleRad) * armLen - perpSin * armHalf
+
+        revolverSelectorPaint.color = applyAlphaF(
+            if (inCancel) Color.GRAY else preset.nodeSelectedColor,
+            if (inCancel) 0.28f else 0.88f
+        )
+        revolverSelectorPaint.strokeWidth = 2.5f
+        revolverSelectorPaint.strokeCap   = Paint.Cap.ROUND
+        canvas.drawLine(tipX, tipY, arm1X, arm1Y, revolverSelectorPaint)
+        canvas.drawLine(tipX, tipY, arm2X, arm2Y, revolverSelectorPaint)
 
         // ── 選択中アプリ名 ─────────────────────────────────────────
         if (!inCancel && tv.selectedPinnedIndex in pinned.indices) {
             val label = pinned[tv.selectedPinnedIndex].label
             revolverTextPaint.textSize = (cfg.buttonRadiusPx * 0.36f).coerceIn(24f, 44f)
             revolverTextPaint.color    = applyAlphaF(Color.WHITE, 0.92f)
-            // ボール直下（または直上）にアプリ名を表示
             val textY = if (cy + cfg.buttonRadiusPx + 52f + revolverTextPaint.textSize < screenH) {
                 cy + cfg.buttonRadiusPx + 52f
             } else {
@@ -336,12 +367,13 @@ class OverlayExpandView(context: Context) : View(context) {
 
     /**
      * リボルバーリング半径を画面端に合わせて縮小する。
-     * アイコンが画面外に大きくはみ出さないようにする。
+     * nodeRadius パラメータでリボルバー専用アイコンサイズを考慮する。
      */
     private fun computeRevolverRadius(
-        cx: Float, cy: Float, screenW: Float, screenH: Float, base: Float
+        cx: Float, cy: Float, screenW: Float, screenH: Float,
+        base: Float, nodeRadius: Float
     ): Float {
-        val margin = cfg.nodeRadiusPx * 1.2f + 8f
+        val margin = nodeRadius * 1.2f + 8f
         val maxAllowed = minOf(
             cx - margin,
             screenW - cx - margin,
