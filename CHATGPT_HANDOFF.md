@@ -1,10 +1,11 @@
 # PullyLauncher-V1-Windows — ChatGPT Handoff
 
 > Branch: `fix/v1-hidden-apps-secure-overlay`
-> HEAD: `e102d80` (pushed to origin)
+> HEAD: `857b1ce` (pushed to origin)
+> Tag: `v2.0.0` — Pully Launcher V2 general distribution release
 > Base: `origin/recovery/mac-latest-20260617`
-> Date: 2026-06-17
-> Status: **BUILD SUCCESSFUL, LINT CLEAN — Galaxy device testing pending**
+> Date: 2026-06-18
+> Status: **BUILD SUCCESSFUL, LINT CLEAN — V2 complete; Galaxy daily use confirmed良好**
 
 ---
 
@@ -29,7 +30,10 @@ $env:JAVA_HOME = "C:\Users\Ryon\AppData\Local\Programs\Android Studio\jbr"
 ## 2. Full Commit Log (This Branch)
 
 ```
-edaa1ec docs: update handoff for e102d80  ← HEAD
+857b1ce feat: increase pinned apps limit from 8 to 16  ← HEAD / v2.0.0
+8e74493 feat: extend revolver ring ratio max from 4.0 to 6.0
+f355941 docs: fix handoff — commit log, checklist headings, app picker test items
+edaa1ec docs: update handoff for e102d80
 e102d80 feat: improve settings UI — fixed preview, slim slider, feature list, icon app picker
 6b74aa3 feat: redesign settings screen — Pull/Revolver tabs, SliderSettingCard, previews, feature grid
 cf9fd06 docs: update handoff for 22edc98
@@ -192,7 +196,7 @@ Pull 側の設定（nodeRadiusPx, spacingPx 等）には一切影響しない。
 
 | フィールド | 型 | デフォルト | 範囲 | SharedPreferences キー |
 |-----------|-----|---------|------|----------------------|
-| `revolverRingRatio` | Float | 2.4f | 1.5〜4.0 | `revolver_ring_ratio` |
+| `revolverRingRatio` | Float | 2.4f | 1.5〜6.0 | `revolver_ring_ratio` |
 | `revolverSpeedScale` | Float | 1.0f | 0.5〜2.0 | `revolver_speed_scale` |
 | `revolverNodeScale` | Float | 1.0f | 0.5〜1.8 | `revolver_node_scale` |
 | `revolverArcSpacing` | Float | 1.0f | 0.4〜1.8 | `revolver_arc_spacing` |
@@ -450,11 +454,13 @@ private val DangerColor   = Color(0xFFBF5A5A)  // 赤（リセット/削除）
 ## 11. ビルド結果
 
 ```
-e102d80 (設定UI改善)         — assembleDebug SUCCESSFUL,  lintDebug CLEAN  ← @OptIn(ExperimentalMaterial3Api) 追加で解決
-6b74aa3 (設定画面リデザイン) — assembleDebug SUCCESSFUL,  lintDebug CLEAN
-22edc98 (V2 設定・描画改良)  — assembleDebug SUCCESSFUL,  lintDebug CLEAN
-601e6c2 (V2 UX 調整)         — assembleDebug SUCCESSFUL,  lintDebug CLEAN
-f24e487 (V2 実装)             — assembleDebug SUCCESSFUL,  lintDebug CLEAN
+857b1ce (固定アプリ上限16)    — assembleDebug SUCCESSFUL,  lintDebug CLEAN  ← HEAD / v2.0.0
+8e74493 (直径max 6.0)         — assembleDebug SUCCESSFUL,  lintDebug CLEAN
+e102d80 (設定UI改善)          — assembleDebug SUCCESSFUL,  lintDebug CLEAN  ← @OptIn(ExperimentalMaterial3Api) 追加で解決
+6b74aa3 (設定画面リデザイン)  — assembleDebug SUCCESSFUL,  lintDebug CLEAN
+22edc98 (V2 設定・描画改良)   — assembleDebug SUCCESSFUL,  lintDebug CLEAN
+601e6c2 (V2 UX 調整)          — assembleDebug SUCCESSFUL,  lintDebug CLEAN
+f24e487 (V2 実装)              — assembleDebug SUCCESSFUL,  lintDebug CLEAN
 ```
 
 ビルド注意: `Slider(thumb = ..., track = ...)` の `SliderState` は M3 1.3.0 で `@ExperimentalMaterial3Api`。
@@ -462,7 +468,71 @@ f24e487 (V2 実装)             — assembleDebug SUCCESSFUL,  lintDebug CLEAN
 
 ---
 
-## 12. 禁止事項
+## 12. Galaxy 実機での使用実績
+
+**2026-06-18 時点の事実ベース記録**
+
+Galaxy 端末で Pully Launcher V2 を日常使用し、基本使用感は良好であることを確認。  
+個別チェック項目の合否は実機検証セッションで別途確認すること。
+
+> 「日常使用で問題なし」と「個別機能の動作確認済み」は別物。チェックリスト（Section 13）の各項目は引き続き未確認扱いとする。
+
+---
+
+## 13. MacBook / ARK Developer への引き継ぎ手順
+
+### リポジトリ取得
+
+```bash
+git clone https://github.com/rebirth-kreate/PullyLauncher.git
+cd PullyLauncher
+git checkout fix/v1-hidden-apps-secure-overlay
+# または完成タグで取得
+git checkout v2.0.0
+```
+
+### ビルド環境
+
+| 項目 | 値 |
+|------|-----|
+| AGP | 9.0.0 |
+| Kotlin | 2.2.10 (AGP 9.0+ 組み込み、`kotlin.android` プラグイン不要) |
+| Gradle | 9.1.0 |
+| Min SDK | 26 | Target SDK | 36 |
+| JDK | Android Studio 付属 JBR |
+
+> **重要**: AGP 9.0+ は Kotlin を組み込み済み。`org.jetbrains.kotlin.android` を追加しないこと。
+
+### Mac でのビルドコマンド
+
+```bash
+# Android Studio の JBR パス（Mac）
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+
+./gradlew assembleDebug
+./gradlew lintDebug
+```
+
+### Windows でのビルドコマンド（参考）
+
+```powershell
+$env:JAVA_HOME = "C:\Users\Ryon\AppData\Local\Programs\Android Studio\jbr"
+.\gradlew.bat assembleDebug
+.\gradlew.bat lintDebug
+```
+
+### 変更禁止事項（引き継ぎ後も継続）
+
+Section 14 の禁止事項を参照。特に以下は厳守：
+- `applicationId` / `namespace` / `package` 名
+- UsageEvents 検出ロジック（750ms ポーリング、`queryForegroundEvent`）
+- SharedPreferences 既存キーの削除・リネーム
+- V1 Pull ジェスチャー実装
+- V2 Revolver ジェスチャー実装
+
+---
+
+## 15. 禁止事項
 
 - `git reset --hard` / `git clean` — 禁止
 - Force push — 禁止
@@ -479,7 +549,7 @@ f24e487 (V2 実装)             — assembleDebug SUCCESSFUL,  lintDebug CLEAN
 
 ---
 
-## 13. Galaxy 実機で確認が必要な項目（全項目 未確認）
+## 16. Galaxy 実機で確認が必要な項目（個別項目はすべて未確認）
 
 ### 基本動作
 - [ ] タップ → ホーム / Pull → V1 弧メニュー / ダブルタップ → 一時非表示
@@ -536,7 +606,7 @@ f24e487 (V2 実装)             — assembleDebug SUCCESSFUL,  lintDebug CLEAN
 
 ---
 
-## 14. 次に行うべき作業
+## 17. 次に行うべき作業
 
 1. Galaxy 実機でチェックリスト確認
 2. デフォルト値の実機確認後に微調整（arcSpacing=1.0=60° が広すぎ/狭すぎる場合など）
