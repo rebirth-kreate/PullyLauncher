@@ -5,6 +5,7 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.os.Process
+import android.util.Log
 import com.example.pullyluncher.model.AppEntry
 
 /**
@@ -15,9 +16,15 @@ import com.example.pullyluncher.model.AppEntry
  */
 object UsageHistoryRepository {
 
-    // ACTIVITY_RESUMED = 19 (API 29+) — 生の値を使い @RequiresApi のlint警告を回避
-    private const val ACTIVITY_RESUMED_INT = 19
+    /**
+     * System UI など一時的なレイヤーのパッケージ。
+     * これらのイベントは無視して直前の前面パッケージを維持する。
+     * ホーム画面 Launcher は含まない（ホームへ戻ったときに正しく検知するため）。
+     */
     private val IGNORED_PACKAGES = setOf("com.android.systemui", "android")
+
+    /** per-event の詳細ログ用タグ。`adb shell setprop log.tag.PullyEvents D` で有効化。 */
+    private const val LOG_TAG = "PullyEvents"
 
     /**
      * インストール済みランチャーアプリを最近使った順（または ABC 順）で返す。
@@ -62,33 +69,85 @@ object UsageHistoryRepository {
     }
 
     /**
-     * queryEvents() で現在フォアグラウンドにあるアプリの packageName を返す。
-     * 対応イベント: MOVE_TO_FOREGROUND (API 26+), ACTIVITY_RESUMED (API 29+)
-     * 直近 10 秒のイベントを走査し、最も新しいフォアグラウンド遷移を返す。
-     * 権限がない、またはイベントが存在しない場合は null を返す。
+     * カーソル方式でアクティビティ前面イベントを検索する。
+     *
+     * 対象イベント: [UsageEvents.Event.MOVE_TO_FOREGROUND] のみ（integer value = 1）。
+     *
+     * ── イベント定数について ──────────────────────────────────────────────────
+     * [UsageEvents.Event.MOVE_TO_FOREGROUND]  API 21+  value=1  deprecated since API 29
+     * [UsageEvents.Event.ACTIVITY_RESUMED]    API 29+  value=1  MOVE_TO_FOREGROUND の後継
+     * [UsageEvents.Event.FOREGROUND_SERVICE_START]     value=19 (フォアグラウンドServiceの起動)
+     *
+     * 両者は整数値 1 を共有するため、deprecated な MOVE_TO_FOREGROUND を使っても
+     * ACTIVITY_RESUMED と同じイベントを受け取れる。@Suppress("DEPRECATION") で
+     * lint 警告を局所的に抑制し、minSdk=26（API 26〜28）での互換性を維持する。
+     * raw integer 19 は FOREGROUND_SERVICE_START であり、Activity の前面移動ではないため使用しない。
+     * ────────────────────────────────────────────────────────────────────────
+     *
+     * @param afterTimestampMs このタイムスタンプ（ミリ秒）より**新しい**イベントだけを対象とする（排他的下限）。
+     *                         0L を渡すと [lookbackMs] 内の全イベントを検索する（初回起動用）。
+     * @param lookbackMs queryEvents の検索開始点の上限（古い [afterTimestampMs] を clamp するだけ）。
+     *                   [afterTimestampMs] が十分新しければ lookbackMs は実質無効。
+     * @return 新しいフォアグラウンドイベントが見つかった場合は (packageName, eventTimestamp)、
+     *         なければ null。呼び出し元は null のとき現在の前面パッケージを維持すること。
      */
-    fun getForegroundPackageFromEvents(context: Context): String? {
+    @Suppress("DEPRECATION")
+    fun queryForegroundEvent(
+        context: Context,
+        afterTimestampMs: Long,
+        lookbackMs: Long = 60_000L
+    ): Pair<String, Long>? {
         if (!hasPermission(context)) return null
         return try {
-            val usm  = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-            val now  = System.currentTimeMillis()
-            val past = now - 10_000L
-            val events = usm.queryEvents(past, now) ?: return null
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+            val now = System.currentTimeMillis()
+            // afterTimestampMs の 200ms 手前から検索してタイムスタンプ精度のズレを吸収する。
+            // 同一イベントの重複処理は後段の「ts <= afterTimestampMs」チェックで除外する。
+            val queryStart = (afterTimestampMs - 200L).coerceAtLeast(now - lookbackMs)
+            val events = usm.queryEvents(queryStart, now) ?: return null
             val event = UsageEvents.Event()
             var latestPkg: String? = null
-            var latestTime = 0L
+            var latestTime = afterTimestampMs   // strictly-greater check: ts > afterTimestampMs のみ採用
+            val verbose = Log.isLoggable(LOG_TAG, Log.DEBUG)
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
-                if (event.packageName == context.packageName) continue
-                if (event.packageName in IGNORED_PACKAGES) continue
-                val isFg = event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
-                           event.eventType == ACTIVITY_RESUMED_INT
-                if (isFg && event.timeStamp > latestTime) {
-                    latestTime = event.timeStamp
-                    latestPkg = event.packageName
+                val pkg  = event.packageName
+                val type = event.eventType
+                val ts   = event.timeStamp
+                when {
+                    pkg == context.packageName -> {
+                        if (verbose) Log.d(LOG_TAG,
+                            "skip type=$type pkg=$pkg ts=$ts reason=ownPkg")
+                        continue
+                    }
+                    pkg in IGNORED_PACKAGES -> {
+                        if (verbose) Log.d(LOG_TAG,
+                            "skip type=$type pkg=$pkg ts=$ts reason=systemPkg")
+                        continue
+                    }
+                    // MOVE_TO_FOREGROUND == ACTIVITY_RESUMED == 1
+                    // FOREGROUND_SERVICE_START == 19 → 対象外
+                    type != UsageEvents.Event.MOVE_TO_FOREGROUND -> {
+                        if (verbose) Log.d(LOG_TAG,
+                            "skip type=$type pkg=$pkg ts=$ts reason=notForeground")
+                        continue
+                    }
+                    ts <= afterTimestampMs -> {
+                        if (verbose) Log.d(LOG_TAG,
+                            "skip type=$type pkg=$pkg ts=$ts reason=alreadySeen(after=$afterTimestampMs)")
+                        continue
+                    }
+                    else -> {
+                        if (verbose) Log.d(LOG_TAG,
+                            "accept type=$type pkg=$pkg ts=$ts")
+                        if (ts > latestTime) {
+                            latestTime = ts
+                            latestPkg  = pkg
+                        }
+                    }
                 }
             }
-            latestPkg
+            if (latestPkg != null) Pair(latestPkg, latestTime) else null
         } catch (_: Exception) { null }
     }
 

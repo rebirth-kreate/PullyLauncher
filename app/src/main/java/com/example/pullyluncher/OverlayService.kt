@@ -49,8 +49,10 @@ import kotlin.math.roundToInt
  *
  * ── 前面アプリ検知 ────────────────────────────────────────────────────
  *   UsageStatsManager.queryEvents() を 750ms ポーリングで使用。
- *   対応イベント: MOVE_TO_FOREGROUND (API 26+), ACTIVITY_RESUMED (API 29+)
- *   権限なし・画面消灯中・同一パッケージ時はスキップ。
+ *   対象イベント: MOVE_TO_FOREGROUND のみ（value=1、ACTIVITY_RESUMED と同値）。
+ *   value=19 の FOREGROUND_SERVICE_START は Activity の前面移動ではないため除外。
+ *   カーソル方式: lastFgEventTimestampMs より新しいイベントだけを処理する。
+ *   権限なし・画面消灯中はスキップ。イベントなしは現在のパッケージを維持。
  */
 class OverlayService : Service() {
 
@@ -78,7 +80,13 @@ class OverlayService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
 
     // ── ポーリング状態 ────────────────────────────────────────────
-    /** 前回ポーリングで検出したパッケージ名。同一なら queryEvents をスキップ。 */
+    /**
+     * 最後に処理した MOVE_TO_FOREGROUND イベントのタイムスタンプ（ms）。
+     * 0L = 未取得（初回・権限失効後の再取得）→ INITIAL_LOOKBACK_MS を使う。
+     * これより新しいイベントだけを queryForegroundEvent が返す（カーソル方式）。
+     */
+    private var lastFgEventTimestampMs: Long = 0L
+    /** 最後に確定した前面パッケージ名。重複処理スキップに使う。 */
     private var lastPolledPkg: String? = null
     /** 前回確認した Usage Access 権限状態。 */
     private var lastPolledHasPermission: Boolean? = null
@@ -97,6 +105,10 @@ class OverlayService : Service() {
         private const val FADE_DURATION_MS         = 150L
         /** UsageStats 前面アプリポーリング間隔（ミリ秒）。 */
         private const val FOREGROUND_POLL_INTERVAL_MS = 750L
+        /** サービス起動時・権限回復時の初期ルックバック（60秒）。 */
+        private const val INITIAL_LOOKBACK_MS = 60_000L
+        /** 通常ポーリング時のルックバック上限（5秒）。大半は lastFgEventTimestampMs で clamp される。 */
+        private const val POLL_LOOKBACK_MS    = 5_000L
     }
 
     // ── ライフサイクル ────────────────────────────────────────────
@@ -135,8 +147,10 @@ class OverlayService : Service() {
 
         LauncherRepository.onIconsLoaded = { drawView?.invalidate() }
 
-        // UsageStats 前面アプリポーリング（750ms 間隔）
+        // UsageStats 前面アプリポーリング（初回即時 + 750ms 間隔）
         serviceScope.launch {
+            // 初回: 遅延なし・60秒ルックバックで起動直後の前面アプリを取得
+            pollForegroundPackage()
             while (true) {
                 delay(FOREGROUND_POLL_INTERVAL_MS)
                 pollForegroundPackage()
@@ -158,12 +172,13 @@ class OverlayService : Service() {
     // ── 前面アプリポーリング ──────────────────────────────────────
 
     /**
-     * UsageStats queryEvents() で前面アプリを取得し、LauncherRepository を更新する。
+     * カーソル方式で前面アプリを取得し、LauncherRepository を更新する。
      *
-     * スキップ条件:
-     *   ・画面消灯中（isInteractive=false）
-     *   ・Usage Access 権限なし（permission=false）
-     *   ・前回と同一パッケージ（変化なし）
+     * ・lastFgEventTimestampMs == 0L のとき（初回・権限回復後）: INITIAL_LOOKBACK_MS（60秒）を使用。
+     * ・通常ポーリング: POLL_LOOKBACK_MS（5秒）を上限とし、lastFgEventTimestampMs より新しいイベントのみ処理。
+     * ・新規イベントなし: 現在の前面パッケージを維持（null へ戻さない）。
+     * ・画面消灯中: スキップ（アクティブな前面アプリはなし）。
+     * ・権限なし: 前面パッケージをクリアして Pully を表示状態に戻す。
      */
     private fun pollForegroundPackage() {
         if (!powerManager.isInteractive) return
@@ -174,28 +189,39 @@ class OverlayService : Service() {
 
         if (!hasPermission) {
             if (permChanged) {
-                // 権限が失われた — 前面パッケージをクリア
+                // 権限が失われた — 前面パッケージをクリアし、次回権限回復時に初期ルックバックを使わせる
                 LauncherRepository.currentForegroundPackage = null
-                lastPolledPkg = null
+                lastPolledPkg          = null
+                lastFgEventTimestampMs = 0L
                 applyBallVisibility()
             }
             return
         }
 
-        val pkg = UsageHistoryRepository.getForegroundPackageFromEvents(applicationContext)
+        val isInitial  = lastFgEventTimestampMs == 0L
+        val lookbackMs = if (isInitial) INITIAL_LOOKBACK_MS else POLL_LOOKBACK_MS
 
-        if (pkg == null) {
-            // 直近 10 秒に有効なイベントなし — 既存の状態を保持
+        val result = UsageHistoryRepository.queryForegroundEvent(
+            applicationContext,
+            afterTimestampMs = lastFgEventTimestampMs,
+            lookbackMs       = lookbackMs
+        )
+
+        if (result != null) {
+            val (pkg, ts) = result
+            // タイムスタンプを常に更新して同一イベントの再処理を防ぐ
+            lastFgEventTimestampMs = ts
+            if (pkg != lastPolledPkg || permChanged) {
+                val before    = LauncherRepository.currentForegroundPackage
+                lastPolledPkg = pkg
+                LauncherRepository.currentForegroundPackage = pkg
+                logForegroundDetected(before, pkg, ts, isInitial)
+                applyBallVisibility()
+            }
+        } else {
+            // 新規フォアグラウンドイベントなし → 現在のパッケージを維持
             if (permChanged) applyBallVisibility()
-            return
         }
-
-        // 同一パッケージかつ権限変化もなし → スキップ
-        if (pkg == lastPolledPkg && !permChanged) return
-
-        lastPolledPkg = pkg
-        LauncherRepository.currentForegroundPackage = pkg
-        applyBallVisibility()
     }
 
     // ── 2ウィンドウ管理 ──────────────────────────────────────────
@@ -327,14 +353,15 @@ class OverlayService : Service() {
         val hasAccess   = lastPolledHasPermission ?: false
 
         // PullyVisibility ログ — 状態が変化したときだけ出力
-        val pkgChanged    = currentPkg   != lastLogPkg
-        val hiddenChanged = shouldHide   != lastLogIsHidden
-        val permChanged   = hasAccess    != lastLogHasPermission
+        val pkgChanged    = currentPkg != lastLogPkg
+        val hiddenChanged = shouldHide != lastLogIsHidden
+        val permChanged   = hasAccess  != lastLogHasPermission
         if (pkgChanged || hiddenChanged || permChanged) {
+            val before           = lastLogPkg
             lastLogPkg           = currentPkg
             lastLogIsHidden      = shouldHide
             lastLogHasPermission = hasAccess
-            logVisibilityState(currentPkg, hasAccess, hiddenPkgs.size, shouldHide)
+            logVisibilityState(before, currentPkg, hasAccess, hiddenPkgs.size, shouldHide)
         }
 
         if (shouldHide) hideOverlay() else showOverlay()
@@ -450,7 +477,24 @@ class OverlayService : Service() {
 
     // ── PullyVisibility ログ ──────────────────────────────────────
 
+    /**
+     * 前面アプリが変化したときにイベント取得結果をログ出力する。
+     * デバッグビルドのみ出力。同一パッケージへの更新時は呼ばれない。
+     */
+    private fun logForegroundDetected(
+        before: String?,
+        after: String,
+        eventTimestampMs: Long,
+        isInitial: Boolean
+    ) {
+        if (0 == (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)) return
+        val kind = if (isInitial) "initial(60s)" else "event"
+        Log.d("PullyVisibility",
+            "foreground[$kind] before=$before after=$after eventTs=$eventTimestampMs")
+    }
+
     private fun logVisibilityState(
+        before: String?,
         pkg: String?,
         usageAccess: Boolean,
         hiddenCount: Int,
@@ -461,8 +505,10 @@ class OverlayService : Service() {
         val touchVis = visibilityStr(touchView?.visibility)
         val result   = if (isHidden) "HIDE" else "SHOW"
         Log.d("PullyVisibility",
-            "usageAccess=$usageAccess foregroundPackage=$pkg hiddenCount=$hiddenCount " +
-            "isHidden=$isHidden drawVisibility=$drawVis touchVisibility=$touchVis result=$result")
+            "usageAccess=$usageAccess " +
+            "foregroundBefore=$before foregroundAfter=$pkg " +
+            "hiddenCount=$hiddenCount isHidden=$isHidden " +
+            "drawVisibility=$drawVis touchVisibility=$touchVis result=$result")
     }
 
     private fun visibilityStr(vis: Int?) = when (vis) {
