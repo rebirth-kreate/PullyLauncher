@@ -1,28 +1,76 @@
 <resources>
-    <string name="app_name">PullyLuncher</string>
+    <string name="app_name">PullyLauncher</string>
+
+    <!-- ── Common ── -->
     <string name="settings_title">Settings</string>
-    <string name="settings_close">Back</string>
+    <string name="settings_close">Close</string>
     <string name="settings_open">Settings</string>
+    <string name="cancel">Cancel</string>
+    <string name="change">Change</string>
+    <string name="remove_app">Remove</string>
+    <string name="loading">Loading…</string>
+    <string name="grant_permission">Grant Permission</string>
+
+    <!-- ── Section headings ── -->
     <string name="section_appearance">Appearance</string>
+    <string name="section_color">Color</string>
     <string name="section_behavior">Behavior</string>
-    <string name="setting_button_radius">Main button size</string>
-    <string name="setting_node_radius">App icon size</string>
-    <string name="setting_spacing">App spacing</string>
-    <string name="setting_base_offset">First app position</string>
-    <string name="setting_lock_distance">Pull start distance</string>
-    <string name="setting_cancel_ratio">Cancel sensitivity</string>
-    <string name="setting_edge_darkness">Edge darkness</string>
-    <string name="setting_background_glow">Background brightness</string>
-    <string name="setting_node_count">Visible app count</string>
-    <string name="hint_button_radius">Adjust the size of the center button</string>
-    <string name="hint_node_radius">Adjust the size of the app icons</string>
+    <string name="section_pinned_apps">Pinned Apps (up to %d)</string>
+    <string name="section_usage_history">Usage History</string>
+    <string name="section_floating">Floating</string>
+    <string name="section_hidden_apps">Hidden Apps</string>
+
+    <!-- ── Setting labels ── -->
+    <string name="setting_button_radius">Main Ball Size</string>
+    <string name="setting_node_radius">App Icon Size</string>
+    <string name="setting_spacing">App Spacing</string>
+    <string name="setting_base_offset">First App Distance</string>
+    <string name="setting_lock_distance">Direction Lock Distance</string>
+    <string name="setting_cancel_ratio">Cancel Sensitivity</string>
+    <string name="setting_edge_darkness">Edge Darkness</string>
+    <string name="setting_background_glow">Background Glow</string>
+    <string name="setting_node_count">App Count</string>
+    <string name="setting_ball_alpha">Ball Opacity</string>
+    <string name="setting_secure_overlay">Hide from screenshots and screen recording</string>
+
+    <!-- ── Setting hints ── -->
+    <string name="hint_button_radius">Adjust the size of the center ball</string>
+    <string name="hint_node_radius">Adjust the size of app icons</string>
     <string name="hint_spacing">Adjust the spacing between app icons</string>
-    <string name="hint_base_offset">Distance from the center to the first app</string>
-    <string name="hint_lock_distance">How far to pull before direction locks</string>
-    <string name="hint_cancel_ratio">How easily the gesture cancels when drifting off-axis</string>
-    <string name="hint_edge_darkness">Adjust the darkness around the screen edges</string>
-    <string name="hint_background_glow">Adjust the glow around the center background</string>
-    <string name="hint_node_count">Number of visible app nodes</string>
-    <string name="setting_ball_alpha">Ball opacity</string>
-    <string name="hint_ball_alpha">Adjust the opacity of the floating ball and center ball</string>
+    <string name="hint_base_offset">Distance from center ball to first app</string>
+    <string name="hint_lock_distance">Distance to pull before direction locks</string>
+    <string name="hint_cancel_ratio">How far to deviate from the line to cancel</string>
+    <string name="hint_edge_darkness">Adjust edge shadow darkness</string>
+    <string name="hint_background_glow">Adjust center background glow intensity</string>
+    <string name="hint_node_count">Number of apps to display</string>
+    <string name="hint_ball_alpha">Adjust the opacity of the floating ball</string>
+    <string name="hint_secure_overlay">When ON, Pully will not appear in screenshots or screen recordings. It may also be hidden during screen sharing or mirroring.</string>
+
+    <!-- ── Color section ── -->
+    <string name="color_section_description">Select the color scheme for ball, blob, and nodes.</string>
+
+    <!-- ── Pinned apps ── -->
+    <string name="pinned_apps_description">Apps pinned to the top. Remaining slots are filled with recent apps.</string>
+    <string name="add_pinned_app">+ Add Pinned App</string>
+
+    <!-- ── Usage history ── -->
+    <string name="usage_history_enabled">Apps are sorted by recent usage.</string>
+    <string name="usage_history_disabled">Grant \"Usage Access\" permission to sort apps by recent usage. Without it, apps are listed alphabetically.</string>
+
+    <!-- ── Floating control ── -->
+    <string name="overlay_permission_required">Permission to \"Draw over other apps\" is required to show the floating ball.</string>
+    <string name="grant_overlay_permission">Grant Permission</string>
+    <string name="floating_status_running">Floating button is active</string>
+    <string name="floating_status_stopped">Floating button is stopped</string>
+    <string name="stop_floating">Stop</string>
+    <string name="start_floating">Start Floating</string>
+
+    <!-- ── Hidden apps ── -->
+    <string name="hidden_apps_description">The floating ball will be hidden while these apps are in the foreground.</string>
+    <string name="hidden_apps_permission_required">To use hidden apps, grant \"Usage Access\" permission.\nThis permission is used only to detect the current foreground app on your device.\nUsage history is never stored or transmitted.</string>
+    <string name="open_usage_access_settings">Open Usage Access Settings</string>
+    <string name="add_hidden_app">+ Add Hidden App</string>
+
+    <!-- ── App picker ── -->
+    <string name="picker_title">Select App</string>
 </resources>

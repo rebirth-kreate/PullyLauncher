@@ -1,10 +1,27 @@
 <resources>
-    <string name="app_name">PullyLuncher</string>
+    <string name="app_name">PullyLauncher</string>
+
+    <!-- ── 共通 ── -->
     <string name="settings_title">設定</string>
     <string name="settings_close">戻る</string>
     <string name="settings_open">設定</string>
+    <string name="cancel">キャンセル</string>
+    <string name="change">変更</string>
+    <string name="remove_app">解除</string>
+    <string name="loading">読み込み中…</string>
+    <string name="grant_permission">権限を設定する</string>
+
+    <!-- ── セクション見出し ── -->
     <string name="section_appearance">見た目</string>
+    <string name="section_color">カラー</string>
     <string name="section_behavior">挙動</string>
+    <!-- %d に MAX_PINS の値を渡す -->
+    <string name="section_pinned_apps">固定アプリ（最大%d件）</string>
+    <string name="section_usage_history">使用履歴</string>
+    <string name="section_floating">フローティング</string>
+    <string name="section_hidden_apps">フローティング非表示アプリ</string>
+
+    <!-- ── 設定ラベル ── -->
     <string name="setting_button_radius">メインボタンサイズ</string>
     <string name="setting_node_radius">アプリアイコンサイズ</string>
     <string name="setting_spacing">アプリ間隔</string>
@@ -14,6 +31,10 @@
     <string name="setting_edge_darkness">エッジの濃さ</string>
     <string name="setting_background_glow">背景の明るさ</string>
     <string name="setting_node_count">表示アプリ数</string>
+    <string name="setting_ball_alpha">ボール透明度</string>
+    <string name="setting_secure_overlay">スクリーンショット・画面録画に表示しない</string>
+
+    <!-- ── 設定ヒント ── -->
     <string name="hint_button_radius">中央ボタンの大きさを調整します</string>
     <string name="hint_node_radius">並ぶアプリアイコンの大きさを調整します</string>
     <string name="hint_spacing">アプリアイコン同士の間隔を調整します</string>
@@ -23,6 +44,34 @@
     <string name="hint_edge_darkness">画面端の暗さを調整します</string>
     <string name="hint_background_glow">中央背景の光り方を調整します</string>
     <string name="hint_node_count">表示するアプリ数です</string>
-    <string name="setting_ball_alpha">ボール透明度</string>
     <string name="hint_ball_alpha">フローティングボールと中央ボールの透明度を調整します</string>
+    <string name="hint_secure_overlay">ONにすると、スクリーンショットや画面録画にPullyを表示しません。画面共有やミラーリングにも表示されない場合があります。</string>
+
+    <!-- ── カラーセクション ── -->
+    <string name="color_section_description">ボール・ブロブ・ノードの配色を選択します。</string>
+
+    <!-- ── 固定アプリ ── -->
+    <string name="pinned_apps_description">先頭に固定表示するアプリを設定します。残りの枠は使用履歴で埋まります。</string>
+    <string name="add_pinned_app">＋ 固定アプリを追加</string>
+
+    <!-- ── 使用履歴 ── -->
+    <string name="usage_history_enabled">最近使ったアプリ順に表示します。</string>
+    <string name="usage_history_disabled">「使用履歴へのアクセス」権限を付与すると最近使ったアプリ順に表示されます。\n未付与の場合はアルファベット順になります。</string>
+
+    <!-- ── フローティング制御 ── -->
+    <string name="overlay_permission_required">他アプリ上への表示には「他のアプリの上に重ねて表示」権限が必要です。</string>
+    <string name="grant_overlay_permission">表示権限を許可する</string>
+    <string name="floating_status_running">フローティングボタン: 表示中</string>
+    <string name="floating_status_stopped">フローティングボタン: 停止中</string>
+    <string name="stop_floating">停止する</string>
+    <string name="start_floating">フローティング開始</string>
+
+    <!-- ── 非表示アプリ ── -->
+    <string name="hidden_apps_description">これらのアプリが前面にある場合、フローティングボールを非表示にします。</string>
+    <string name="hidden_apps_permission_required">非表示アプリ機能を使用するには、「使用履歴へのアクセス」を許可してください。\nこの権限は、現在表示中のアプリを端末内で判定するためだけに使用します。\n利用履歴を保存・送信することはありません。</string>
+    <string name="open_usage_access_settings">使用履歴へのアクセスを開く</string>
+    <string name="add_hidden_app">＋ 非表示アプリを追加</string>
+
+    <!-- ── アプリピッカー ── -->
+    <string name="picker_title">アプリを選択</string>
 </resources>

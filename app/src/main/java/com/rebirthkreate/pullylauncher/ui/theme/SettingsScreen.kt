@@ -185,10 +185,10 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         // ---- カラー ----
-        SettingSection(title = "カラー")
+        SettingSection(title = stringResource(R.string.section_color))
 
         Text(
-            text  = "ボール・ブロブ・ノードの配色を選択します。",
+            text  = stringResource(R.string.color_section_description),
             color = Color(0xFF81A1C1),
             style = MaterialTheme.typography.bodySmall
         )
@@ -270,16 +270,14 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         // ---- 固定アプリ ----
-        SettingSection(title = "固定アプリ（最大${LauncherRepository.MAX_PINS}件）")
+        SettingSection(title = stringResource(R.string.section_pinned_apps, LauncherRepository.MAX_PINS))
 
         Text(
-            text  = "先頭に固定表示するアプリを設定します。残りの枠は使用履歴で埋まります。",
+            text  = stringResource(R.string.pinned_apps_description),
             color = Color(0xFF81A1C1),
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(modifier = Modifier.height(8.dp))
-
-        // 固定アプリ一覧
         localPinned.forEachIndexed { i, app ->
             PinnedAppRow(
                 index      = i,
@@ -309,7 +307,6 @@ fun SettingsScreen(
             )
         }
 
-        // 追加ボタン（3件未満のとき）
         if (localPinned.size < LauncherRepository.MAX_PINS) {
             TextButton(
                 onClick  = {
@@ -319,7 +316,7 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text  = "＋ 固定アプリを追加",
+                    text  = stringResource(R.string.add_pinned_app),
                     color = Color(0xFF88C0D0)
                 )
             }
@@ -328,17 +325,17 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         // ---- 使用履歴 ----
-        SettingSection(title = "使用履歴")
+        SettingSection(title = stringResource(R.string.section_usage_history))
 
         if (isUsageStatsGranted) {
             Text(
-                text  = "最近使ったアプリ順に表示します。",
+                text  = stringResource(R.string.usage_history_enabled),
                 color = Color(0xFF88C0D0),
                 style = MaterialTheme.typography.bodySmall
             )
         } else {
             Text(
-                text  = "「使用履歴へのアクセス」権限を付与すると最近使ったアプリ順に表示されます。\n未付与の場合はアルファベット順になります。",
+                text  = stringResource(R.string.usage_history_disabled),
                 color = Color(0xFF81A1C1),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -352,45 +349,49 @@ fun SettingsScreen(
                     )
                 }
             ) {
-                Text("権限を設定する")
+                Text(stringResource(R.string.grant_permission))
             }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
         // ---- フローティング ----
-        SettingSection(title = "フローティング")
+        SettingSection(title = stringResource(R.string.section_floating))
 
         if (!hasOverlayPermission) {
             Text(
-                text  = "他アプリ上への表示には「他のアプリの上に重ねて表示」権限が必要です。",
+                text  = stringResource(R.string.overlay_permission_required),
                 color = Color(0xFFBF616A),
                 style = MaterialTheme.typography.bodySmall
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = onRequestPermission) { Text("表示権限を許可する") }
+            Button(onClick = onRequestPermission) {
+                Text(stringResource(R.string.grant_overlay_permission))
+            }
         } else {
             val statusColor = if (isOverlayRunning) Color(0xFF88C0D0) else Color(0xFF81A1C1)
-            val statusText  = if (isOverlayRunning) "表示中" else "停止中"
             Text(
-                text  = "フローティングボタン: $statusText",
+                text  = if (isOverlayRunning) stringResource(R.string.floating_status_running)
+                        else stringResource(R.string.floating_status_stopped),
                 color = statusColor,
                 style = MaterialTheme.typography.bodyMedium
             )
             Spacer(modifier = Modifier.height(8.dp))
             if (isOverlayRunning) {
                 OutlinedButton(onClick = onStopOverlay) {
-                    Text("停止する", color = Color(0xFFBF616A))
+                    Text(stringResource(R.string.stop_floating), color = Color(0xFFBF616A))
                 }
             } else {
-                Button(onClick = onStartOverlay) { Text("フローティング開始") }
+                Button(onClick = onStartOverlay) {
+                    Text(stringResource(R.string.start_floating))
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
             SettingSwitch(
-                label   = "スクリーンショット・画面録画に表示しない",
-                hint    = "ONにすると、スクリーンショットや画面録画にPullyを表示しません。画面共有やミラーリングにも表示されない場合があります。",
+                label   = stringResource(R.string.setting_secure_overlay),
+                hint    = stringResource(R.string.hint_secure_overlay),
                 checked = config.secureOverlay,
                 onCheckedChange = { onConfigChange(config.copy(secureOverlay = it)) }
             )
@@ -399,10 +400,10 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         // ---- 非表示アプリ ----
-        SettingSection(title = "フローティング非表示アプリ")
+        SettingSection(title = stringResource(R.string.section_hidden_apps))
 
         Text(
-            text  = "これらのアプリが前面にある場合、フローティングボールを非表示にします。",
+            text  = stringResource(R.string.hidden_apps_description),
             color = Color(0xFF81A1C1),
             style = MaterialTheme.typography.bodySmall
         )
@@ -410,7 +411,7 @@ fun SettingsScreen(
         if (!isUsageStatsGranted) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text  = "非表示アプリ機能を使用するには、「使用履歴へのアクセス」を許可してください。\nこの権限は、現在表示中のアプリを端末内で判定するためだけに使用します。\n利用履歴を保存・送信することはありません。",
+                text  = stringResource(R.string.hidden_apps_permission_required),
                 color = Color(0xFFBF616A),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -431,7 +432,7 @@ fun SettingsScreen(
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("使用履歴へのアクセスを開く")
+                Text(stringResource(R.string.open_usage_access_settings))
             }
         }
 
@@ -458,7 +459,7 @@ fun SettingsScreen(
                     },
                     contentPadding = PaddingValues(horizontal = 6.dp)
                 ) {
-                    Text("解除", color = Color(0xFFBF616A))
+                    Text(stringResource(R.string.remove_app), color = Color(0xFFBF616A))
                 }
             }
         }
@@ -467,7 +468,7 @@ fun SettingsScreen(
             onClick  = { showHiddenPicker = true },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("＋ 非表示アプリを追加", color = Color(0xFF88C0D0))
+            Text(stringResource(R.string.add_hidden_app), color = Color(0xFF88C0D0))
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -521,10 +522,10 @@ private fun PinnedAppRow(
             Spacer(modifier = Modifier.width(40.dp))
         }
         TextButton(onClick = onSelect, contentPadding = PaddingValues(horizontal = 6.dp)) {
-            Text("変更", color = Color(0xFF88C0D0))
+            Text(stringResource(R.string.change), color = Color(0xFF88C0D0))
         }
         TextButton(onClick = onDelete, contentPadding = PaddingValues(horizontal = 6.dp)) {
-            Text("解除", color = Color(0xFFBF616A))
+            Text(stringResource(R.string.remove_app), color = Color(0xFFBF616A))
         }
     }
 }
@@ -547,7 +548,7 @@ private fun AppPickerDialog(
                 .padding(16.dp)
         ) {
             Text(
-                text  = "アプリを選択",
+                text  = stringResource(R.string.picker_title),
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium
             )
@@ -557,7 +558,7 @@ private fun AppPickerDialog(
 
             if (allApps.isEmpty()) {
                 Text(
-                    text     = "読み込み中...",
+                    text     = stringResource(R.string.loading),
                     color    = Color(0xFF81A1C1),
                     modifier = Modifier.padding(vertical = 16.dp)
                 )
@@ -587,7 +588,7 @@ private fun AppPickerDialog(
                 onClick  = onDismiss,
                 modifier = Modifier.align(Alignment.End)
             ) {
-                Text("キャンセル", color = Color(0xFF81A1C1))
+                Text(stringResource(R.string.cancel), color = Color(0xFF81A1C1))
             }
         }
     }
