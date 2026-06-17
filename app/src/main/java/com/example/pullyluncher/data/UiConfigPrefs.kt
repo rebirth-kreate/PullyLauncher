@@ -93,7 +93,7 @@ object UiConfigPrefs {
                 )
             } catch (_: Exception) { SelectorPosition.RIGHT },
             // リボルバー専用
-            revolverRingRatio  = prefs.getFloat(KEY_REVOLVER_RING_RATIO,  default.revolverRingRatio).coerceIn(1.5f, 4.0f),
+            revolverRingRatio  = prefs.getFloat(KEY_REVOLVER_RING_RATIO,  default.revolverRingRatio).coerceIn(1.5f, 6.0f),
             revolverSpeedScale = prefs.getFloat(KEY_REVOLVER_SPEED_SCALE, default.revolverSpeedScale).coerceIn(0.5f, 2.0f),
             revolverNodeScale  = prefs.getFloat(KEY_REVOLVER_NODE_SCALE,  default.revolverNodeScale).coerceIn(0.5f, 1.8f),
             revolverArcSpacing = prefs.getFloat(KEY_REVOLVER_ARC_SPACING, default.revolverArcSpacing).coerceIn(0.4f, 1.8f)

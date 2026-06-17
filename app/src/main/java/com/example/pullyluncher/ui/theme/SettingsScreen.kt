@@ -492,7 +492,7 @@ private fun RevolverPage(
                 label         = stringResource(R.string.setting_revolver_diameter),
                 hint          = stringResource(R.string.hint_revolver_diameter),
                 value         = config.revolverRingRatio,
-                range         = 1.5f..4.0f,
+                range         = 1.5f..6.0f,
                 step          = 0.1f,
                 format        = { "%.1f×".format(it) },
                 onValueChange = { onConfigChange(config.copy(revolverRingRatio = it)) }

@@ -38,7 +38,7 @@ data class LauncherUiConfig(
     val selectorPosition: SelectorPosition = SelectorPosition.RIGHT,
 
     // ── V2 リボルバー専用設定（Pull 側には影響しない） ──────────────────
-    /** リボルバーリング半径比率（ボール半径 × この値）。1.5〜4.0。デフォルト 2.4 = 現行と同等。 */
+    /** リボルバーリング半径比率（ボール半径 × この値）。1.5〜6.0。デフォルト 2.4 = 現行と同等。 */
     val revolverRingRatio: Float = 2.4f,
     /** 回転速度スケール（1.0 = デフォルト速度の 100%）。0.5〜2.0。 */
     val revolverSpeedScale: Float = 1.0f,
