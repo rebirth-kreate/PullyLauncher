@@ -8,8 +8,15 @@ import android.view.View
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-private const val LONG_PRESS_MS = 500L
-private const val MOVE_CANCEL_PX = 28
+private const val LONG_PRESS_MS   = 500L
+private const val MOVE_CANCEL_PX  = 28
+
+/**
+ * 円形ヒットテストのマージン（px）。
+ * 視覚半径からこの値だけ縮めることで、Window 端の toInt() 誤差と
+ * 描画アンチエイリアス領域への誤タップを防ぐ。
+ */
+private const val HIT_MARGIN = 2f
 
 /**
  * ドラッグ方向スムージング係数（ボール内のみ有効）。
@@ -126,9 +133,11 @@ class OverlayTouchView(
                 // ── 円形ヒットテスト ──────────────────────────────────────────
                 // touch Window は正方形なので、角への誤タップを防ぐために
                 // ローカル座標で視覚円の内側かを判定する。
-                val lx = event.x - width / 2f
-                val ly = event.y - height / 2f
-                val hitR = currentVisualRadius()
+                // width * 0.5f で整数除算の誤差を排除し、円中心を厳密化
+                val lx = event.x - width * 0.5f
+                val ly = event.y - height * 0.5f
+                // -HIT_MARGIN: Window 端の toInt() 切り捨て誤差分を吸収して角の誤タップを防ぐ
+                val hitR = currentVisualRadius() - HIT_MARGIN
                 if (lx * lx + ly * ly > hitR * hitR) return false
 
                 touchDownX = rawX

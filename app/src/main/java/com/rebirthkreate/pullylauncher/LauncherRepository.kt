@@ -116,7 +116,9 @@ object LauncherRepository {
         if (allApps.isNotEmpty()) {
             allApps = UsageHistoryRepository.reorderByUsage(context, allApps)
         }
-        currentForegroundPackage = UsageHistoryRepository.getForegroundPackage(context)
+        // currentForegroundPackage は OverlayService.startForegroundPolling() が唯一の書き込み元。
+        // UsageStatsManager は最大数十秒の遅延があるため、ここで上書きすると
+        // ポーリングが正しく更新した値を古い値で破壊するバグが発生する。
     }
 
     /** refreshHistory の非 suspend ラッパー（Service など非コルーチンコンテキスト用）。 */
